@@ -1,16 +1,46 @@
 import { create } from 'zustand';
 import * as db from '../db/database';
+import { getMetadata, updatePreferences, setOnboardingCompleted } from '../utils/appMetadata';
 
 const normalizeTask = (task) => {
-  if (!task) {
+  if (!task || typeof task !== 'object') {
     return null;
   }
 
+  // Konwertuj completed z INTEGER (0/1) na Boolean
+  // SQLite i localStorage przechowują completed jako INTEGER (0/1)
+  const completed = task.completed === 1 || 
+                    task.completed === true || 
+                    task.completed === '1' ||
+                    (typeof task.completed === 'string' && task.completed.toLowerCase() === 'true');
+  
+  // Upewnij się, że id jest liczbą
+  let taskId = task.id;
+  if (taskId !== undefined && taskId !== null) {
+    taskId = Number(taskId);
+    if (isNaN(taskId)) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  
   return {
     ...task,
-    completed: Boolean(task.completed),
+    completed: Boolean(completed),
+    id: taskId,
   };
 };
+
+const getTimestamp = (value) => {
+  if (!value) {
+    return 0;
+  }
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const sortByCreatedAtDesc = (a, b) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt);
 
 const useAppStore = create((set, get) => ({
   // Stan aplikacji
@@ -19,41 +49,69 @@ const useAppStore = create((set, get) => ({
   currentDate: new Date().toISOString().split('T')[0],
   selectedDate: null,
   isLoading: false,
+  metadata: null,
+  isFirstLaunch: false,
 
   // Akcje
-  loadTasks: async () => {
-    console.log('[Store] Loading tasks...');
+  loadTasks: async (forceRefresh = false) => {
     set({ isLoading: true });
+    
     try {
-      const tasks = await db.getAllTasks();
-      console.log('[Store] Tasks loaded:', tasks.length);
+      const tasks = await db.getAllTasks(forceRefresh);
+      
+      if (!Array.isArray(tasks)) {
+        set({ tasks: [], isLoading: false });
+        return;
+      }
+      
+      const normalizedTasks = tasks
+        .map(normalizeTask)
+        .filter(Boolean)
+        .sort(sortByCreatedAtDesc);
+      
       set({
-        tasks: tasks.map(normalizeTask).filter(Boolean),
+        tasks: normalizedTasks,
+        isLoading: false,
       });
     } catch (error) {
       console.error('[Store] Error loading tasks:', error);
-      // W przypadku bledu, uzyj pustej tablicy
-      set({ tasks: [] });
-    } finally {
-      set({ isLoading: false });
+      set({ tasks: [], isLoading: false });
     }
   },
 
   addTask: async (task) => {
     try {
-      const taskId = await db.addTask(task);
-      const persistedTask = await db.getTaskById(taskId);
-      const normalizedTask = normalizeTask(
-        persistedTask ?? { id: taskId, ...task, completed: false }
-      );
+      const dbResult = await db.addTask(task);
+      const nowISO = new Date().toISOString();
 
-      set((state) => ({
-        tasks: normalizedTask ? [...state.tasks, normalizedTask] : state.tasks,
-      }));
+      const persistedTask =
+        dbResult && typeof dbResult === 'object'
+          ? dbResult
+          : await db.getTaskById(dbResult);
 
-      return taskId;
+      const fallbackTask = {
+        id: typeof dbResult === 'number' ? Number(dbResult) : undefined,
+        ...task,
+        completed: 0,
+        createdAt: nowISO,
+        updatedAt: nowISO,
+      };
+
+      const normalizedTask = normalizeTask(persistedTask ?? fallbackTask);
+
+      if (normalizedTask) {
+        set((state) => {
+          const tasksWithoutCurrent = state.tasks.filter(
+            (existing) => existing.id !== normalizedTask.id
+          );
+          const newTasks = [...tasksWithoutCurrent, normalizedTask].sort(sortByCreatedAtDesc);
+          return { tasks: newTasks };
+        });
+      }
+
+      return normalizedTask?.id ?? fallbackTask.id ?? null;
     } catch (error) {
-      console.error('Error adding task:', error);
+      console.error('[Store] Error adding task:', error);
       throw error;
     }
   },
@@ -77,23 +135,41 @@ const useAppStore = create((set, get) => ({
 
       set((state) => ({
         tasks: state.tasks.map((task) =>
-          task.id === id && normalizedTask ? normalizedTask : task
+          task.id === id ? (normalizedTask || task) : task
         ),
       }));
     } catch (error) {
-      console.error('Error updating task:', error);
+      console.error('[Store] Error updating task:', error);
       throw error;
     }
   },
 
   deleteTask: async (id) => {
     try {
-      await db.deleteTask(id);
+      // Normalizuj ID do liczby, aby upewnić się, że porównanie działa poprawnie
+      const normalizedId = typeof id === 'string' ? parseInt(id, 10) : Number(id);
+      
+      // Optymistyczne usuwanie - najpierw usuń ze stanu (natychmiastowe znikanie z widoku)
+      const previousTasks = get().tasks;
       set((state) => ({
-        tasks: state.tasks.filter((task) => task.id !== id),
+        tasks: state.tasks.filter((task) => {
+          const taskId = typeof task.id === 'string' ? parseInt(task.id, 10) : Number(task.id);
+          return taskId !== normalizedId;
+        }),
       }));
+      
+      try {
+        // Następnie usuń z bazy danych
+        await db.deleteTask(normalizedId);
+        console.log(`[Store] Task ${normalizedId} deleted successfully`);
+      } catch (dbError) {
+        // Jeśli błąd przy usuwaniu z bazy, przywróć zadanie do stanu
+        console.error('[Store] Error deleting task from database:', dbError);
+        set({ tasks: previousTasks });
+        throw dbError;
+      }
     } catch (error) {
-      console.error('Error deleting task:', error);
+      console.error('[Store] Error deleting task:', error);
       throw error;
     }
   },
@@ -108,6 +184,41 @@ const useAppStore = create((set, get) => ({
   setSelectedTask: (task) => set({ selectedTask: task }),
   setSelectedDate: (date) => set({ selectedDate: date }),
   setCurrentDate: (date) => set({ currentDate: date }),
+
+  // Metadane aplikacji
+  loadMetadata: async () => {
+    try {
+      const metadata = await getMetadata();
+      set({ metadata });
+      return metadata;
+    } catch (error) {
+      console.error('[Store] Error loading metadata:', error);
+      return null;
+    }
+  },
+
+  updateMetadataPreferences: async (preferences) => {
+    try {
+      const updated = await updatePreferences(preferences);
+      set({ metadata: updated });
+      return updated;
+    } catch (error) {
+      console.error('[Store] Error updating preferences:', error);
+      throw error;
+    }
+  },
+
+  completeOnboarding: async () => {
+    try {
+      const updated = await setOnboardingCompleted(true);
+      set({ metadata: updated });
+      return updated;
+    } catch (error) {
+      console.error('[Store] Error completing onboarding:', error);
+      throw error;
+    }
+  },
 }));
 
 export default useAppStore;
+

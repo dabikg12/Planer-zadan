@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useRef } from 'react';
+﻿import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   RefreshControl,
   Text,
@@ -11,19 +11,20 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, {
+import {
+  Animated,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withDelay,
-  withSequence,
-} from 'react-native-reanimated';
+} from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
 import TaskItem from './components/TaskItem';
 import TaskForm from './components/TaskForm';
+import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
 
 // Color palette - brown/beige theme
 const colors = {
@@ -43,33 +44,42 @@ const colors = {
 };
 
 export default function TasksScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tasks, loadTasks, deleteTask, toggleTask } = useAppStore();
+  const params = useLocalSearchParams();
+  const { tasks, loadTasks, deleteTask, toggleTask, addTask: addTaskToStore, updateTask: updateTaskInStore } = useAppStore();
   const [showForm, setShowForm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [taskFilter, setTaskFilter] = useState('active'); // 'active' lub 'completed'
   const scrollViewRef = useRef(null);
+  const historySectionRef = useRef(null);
+  const [historySectionY, setHistorySectionY] = useState(0);
 
-  const heroOpacity = useSharedValue(0);
-  const heroTranslate = useSharedValue(24);
-  const listOpacity = useSharedValue(0);
-  const fabScale = useSharedValue(0);
-  const fabRotation = useSharedValue(0);
+  const contentOpacity = useSharedValue(1);
 
   useEffect(() => {
     loadTasks();
-    heroOpacity.value = withDelay(100, withSpring(1, { damping: 15, stiffness: 100 }));
-    heroTranslate.value = withDelay(100, withSpring(0, { damping: 15, stiffness: 100 }));
-    listOpacity.value = withDelay(250, withSpring(1, { damping: 15, stiffness: 100 }));
-    fabScale.value = withDelay(350, withSequence(
-      withSpring(0, { damping: 12 }),
-      withSpring(1, { damping: 12, stiffness: 200 })
-    ));
   }, []);
+
+  // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
+  useFocusEffect(
+    React.useCallback(() => {
+      if (params?.openForm === 'true' || params?.openForm === true) {
+        // Małe opóźnienie aby upewnić się, że ekran jest w pełni załadowany
+        setTimeout(() => {
+          setEditingTask(null);
+          setShowForm(true);
+          // Wyczyść parametr z URL
+          router.setParams({ openForm: undefined });
+        }, 100);
+      }
+    }, [params?.openForm, router])
+  );
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks();
+    await loadTasks(true); // Force refresh - bypass cache
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
@@ -79,71 +89,72 @@ export default function TasksScreen() {
     setShowForm(true);
   };
 
-  const handleAdd = () => {
-    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    fabRotation.value = withSequence(
-      withSpring(45, { damping: 12 }),
-      withSpring(0, { damping: 12 })
-    );
-    setEditingTask(null);
-    setShowForm(true);
-  };
-
   const handleFormSubmit = async (taskData) => {
-    if (editingTask) {
-      await useAppStore.getState().updateTask(editingTask.id, taskData);
-    } else {
-      await useAppStore.getState().addTask(taskData);
+    try {
+      console.log('[Tasks] handleFormSubmit called with:', taskData);
+      if (editingTask) {
+        console.log('[Tasks] Updating task:', editingTask.id);
+        await updateTaskInStore(editingTask.id, taskData);
+      } else {
+        console.log('[Tasks] Adding new task');
+        const taskId = await addTaskToStore(taskData);
+        console.log('[Tasks] Task added with ID:', taskId);
+      }
+      setEditingTask(null);
+      setShowForm(false);
+    } catch (error) {
+      console.error('[Tasks] Error submitting task form:', error);
+      Alert.alert(
+        'Błąd',
+        error.message || 'Nie udało się zapisać zadania. Spróbuj ponownie.',
+        [{ text: 'OK' }]
+      );
+      throw error; // Re-throw to let TaskForm handle it
     }
-    await loadTasks();
-    setEditingTask(null);
   };
 
   const handleDelete = async (id) => {
-    Alert.alert(
-      'Usuń zadanie',
-      'Czy na pewno chcesz usunąć to zadanie?',
-      [
-        { text: 'Anuluj', style: 'cancel' },
-        {
-          text: 'Usuń',
-          style: 'destructive',
-          onPress: async () => {
-            // Skonfiguruj animację układu przed usunięciem - pozwoli na płynne przesunięcie pozostałych elementów
-            LayoutAnimation.configureNext({
-              duration: 250,
-              create: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-              update: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-              },
-              delete: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-            });
-            
-            // Usuń zadanie - LayoutAnimation automatycznie animuje zmiany w układzie
-            await deleteTask(id);
-            await loadTasks(); // Odśwież zadania aby upewnić się, że lista jest aktualna
-            notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            // Przewiń listę do góry po usunięciu zadania, aby pokazać aktywne zadania
-            setTimeout(() => {
-              scrollViewRef.current?.scrollTo({
-                y: 0,
-                animated: true,
-              });
-            }, 300); // Czekamy na zakończenie animacji usuwania i odświeżenie listy
-          },
+    try {
+      // Skonfiguruj animację układu przed usunięciem - pozwoli na płynne przesunięcie pozostałych elementów
+      LayoutAnimation.configureNext({
+        duration: 250,
+        create: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
         },
-      ]
-    );
+        update: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+        },
+        delete: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
+        },
+      });
+      
+      // Usuń zadanie - potwierdzenie jest już w TaskItem
+      await deleteTask(id);
+      notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      // Przewiń listę do góry po usunięciu zadania, aby pokazać aktywne zadania
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({
+          y: 0,
+          animated: true,
+        });
+      }, 300); // Czekamy na zakończenie animacji usuwania i odświeżenie listy
+    } catch (error) {
+      console.error('[Tasks] Error deleting task:', error);
+      // Błąd już został obsłużony w TaskItem (przywrócenie widoku)
+      // Nie pokazujemy Alert - błąd jest już obsłużony wizualnie
+    }
   };
 
   const handleToggle = async (id) => {
-    await toggleTask(id);
+    try {
+      await toggleTask(id);
+    } catch (error) {
+      console.error('[Tasks] Error toggling task:', error);
+      Alert.alert('Błąd', 'Nie udało się zaktualizować zadania. Spróbuj ponownie.', [{ text: 'OK' }]);
+    }
   };
 
   const completedTasks = useMemo(
@@ -155,128 +166,32 @@ export default function TasksScreen() {
     [tasks]
   );
 
-  const heroAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: heroOpacity.value,
-    transform: [{ translateY: heroTranslate.value }],
-  }));
+  // Ostatnie zadania - ostatnie 5 zadań aktywnych lub zrealizowanych
+  const recentActiveTasks = useMemo(
+    () => activeTasks.slice(0, 5),
+    [activeTasks]
+  );
+  const recentCompletedTasks = useMemo(
+    () => completedTasks.slice(0, 5),
+    [completedTasks]
+  );
 
-  const listAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: listOpacity.value,
-  }));
+  const displayedRecentTasks = useMemo(() => {
+    return taskFilter === 'active' ? recentActiveTasks : recentCompletedTasks;
+  }, [taskFilter, recentActiveTasks, recentCompletedTasks]);
 
-  const fabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: fabScale.value },
-      { rotate: `${fabRotation.value}deg` }
-    ],
+  const contentAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
   }));
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style="dark" />
-      <Animated.View style={heroAnimatedStyle}>
-        <View style={{ paddingTop: 32, paddingBottom: 24, paddingHorizontal: 20 }}>
-          <View style={{
-            backgroundColor: colors.card,
-            borderRadius: 24,
-            padding: 24,
-            borderWidth: 1,
-            borderColor: colors.border,
-            shadowColor: colors.primary,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.05,
-            shadowRadius: 8,
-            elevation: 4,
-          }}>
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{
-                  fontSize: 34,
-                  fontWeight: 'bold',
-                  color: colors.text,
-                  marginBottom: 8,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-                }}>
-                  Moje zadania
-                </Text>
-                <Text style={{
-                  fontSize: 17,
-                  color: colors.textSecondary,
-                  lineHeight: 24,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                }}>
-                  Organizuj zadania według priorytetów i kontroluj postęp
-                </Text>
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
-              <View style={{
-                flex: 1,
-                backgroundColor: colors.activeBg,
-                borderRadius: 20,
-                padding: 18,
-                borderWidth: 1,
-                borderColor: colors.active,
-              }}>
-                <Text style={{
-                  fontSize: 13,
-                  fontWeight: '600',
-                  color: colors.primary,
-                  textTransform: 'uppercase',
-                  letterSpacing: 1,
-                  marginBottom: 8,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                }}>
-                  Aktywne
-                </Text>
-                <Text style={{
-                  fontSize: 32,
-                  fontWeight: 'bold',
-                  color: colors.text,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-                }}>
-                  {activeTasks.length}
-                </Text>
-              </View>
-              <View style={{
-                flex: 1,
-                backgroundColor: colors.completedBg,
-                borderRadius: 20,
-                padding: 18,
-                borderWidth: 1,
-                borderColor: colors.completed,
-              }}>
-                <Text style={{
-                  fontSize: 13,
-                  fontWeight: '600',
-                  color: colors.primary,
-                  textTransform: 'uppercase',
-                  letterSpacing: 1,
-                  marginBottom: 8,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                }}>
-                  Zrealizowane
-                </Text>
-                <Text style={{
-                  fontSize: 32,
-                  fontWeight: 'bold',
-                  color: colors.text,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-                }}>
-                  {completedTasks.length}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Animated.View>
-
       <Animated.ScrollView
         ref={scrollViewRef}
-        style={[{ flex: 1, paddingHorizontal: 20 }, listAnimatedStyle]}
+        style={[{ flex: 1 }]}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 145 + insets.bottom }} // Space for FAB (56px) + position (69px) + extra padding (20px)
+        contentContainerStyle={{ paddingBottom: 120 + insets.bottom }} // Space for glass menu (88px) + extra padding (32px)
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -286,17 +201,349 @@ export default function TasksScreen() {
           />
         }
       >
-        {activeTasks.length > 0 ? (
-          <View style={{ marginBottom: 32 }}>
+        <Animated.View style={contentAnimatedStyle}>
+          {/* Nagłówek z kartami statystyk */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 32, paddingBottom: 24 }}>
+            <View style={{
+              backgroundColor: colors.card,
+              borderRadius: 24,
+              padding: 24,
+              borderWidth: 1,
+              borderColor: colors.border,
+              boxShadow: '0 2px 8px rgba(139, 111, 71, 0.05)',
+              elevation: 4,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{
+                    fontSize: 34,
+                    fontWeight: getFontWeight('bold'),
+                    color: colors.text,
+                    marginBottom: 8,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    Moje zadania
+                  </Text>
+                  <Text style={{
+                    fontSize: 17,
+                    color: colors.textSecondary,
+                    lineHeight: 24,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Organizuj zadania według priorytetów i kontroluj postęp
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+                <View style={{
+                  flex: 1,
+                  backgroundColor: colors.activeBg,
+                  borderRadius: 20,
+                  padding: 18,
+                  borderWidth: 1,
+                  borderColor: colors.active,
+                }}>
+                  <Text style={{
+                    fontSize: 13,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.primary,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    marginBottom: 8,
+                    fontFamily: getFontFamily('600', 'text'),
+                  }}>
+                    Aktywne
+                  </Text>
+                  <Text style={{
+                    fontSize: 32,
+                    fontWeight: getFontWeight('bold'),
+                    color: colors.text,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    {activeTasks.length}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    // Przewiń do sekcji z zrealizowanymi zadaniami
+                    setTimeout(() => {
+                      if (historySectionRef.current && scrollViewRef.current) {
+                        historySectionRef.current.measure((x, y, width, height, pageX, pageY) => {
+                          scrollViewRef.current?.scrollTo({
+                            y: y - 20,
+                            animated: true,
+                          });
+                        });
+                      } else if (historySectionY > 0) {
+                        scrollViewRef.current?.scrollTo({
+                          y: historySectionY - 20,
+                          animated: true,
+                        });
+                      } else {
+                        scrollViewRef.current?.scrollToEnd({ animated: true });
+                      }
+                    }, 100);
+                  }}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.completedBg,
+                    borderRadius: 20,
+                    padding: 18,
+                    borderWidth: 1,
+                    borderColor: colors.completed,
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 13,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.primary,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    marginBottom: 8,
+                    fontFamily: getFontFamily('600', 'text'),
+                  }}>
+                    Zrealizowane
+                  </Text>
+                  <Text style={{
+                    fontSize: 32,
+                    fontWeight: getFontWeight('bold'),
+                    color: colors.text,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    {completedTasks.length}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          {/* Sekcja Ostatnie zadania */}
+          <View style={{ paddingHorizontal: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{
                 fontSize: 22,
-                fontWeight: 'bold',
+                fontWeight: getFontWeight('bold'),
                 color: colors.text,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                fontFamily: getFontFamily('bold', 'display'),
               }}>
-                Aktywne zadania
+                Ostatnie zadania
               </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Pressable
+                  onPress={() => {
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setTaskFilter('active');
+                  }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: taskFilter === 'active' ? colors.activeBg : 'transparent',
+                    borderWidth: 1,
+                    borderColor: taskFilter === 'active' ? colors.active : colors.border,
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: getFontWeight('600'),
+                    color: taskFilter === 'active' ? colors.primary : colors.textSecondary,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Aktywne
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setTaskFilter('completed');
+                  }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: taskFilter === 'completed' ? colors.completedBg : 'transparent',
+                    borderWidth: 1,
+                    borderColor: taskFilter === 'completed' ? colors.completed : colors.border,
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: getFontWeight('600'),
+                    color: taskFilter === 'completed' ? colors.primary : colors.textSecondary,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Zrealizowane
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {displayedRecentTasks.length > 0 ? (
+              <View>
+                {displayedRecentTasks.map((task, index) => (
+                  <TaskItem
+                    key={task.id}
+                    task={task}
+                    onToggle={() => handleToggle(task.id)}
+                    onEdit={() => handleEdit(task)}
+                    onDelete={() => handleDelete(task.id)}
+                    index={index}
+                  />
+                ))}
+              </View>
+            ) : (
+              <View style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 48,
+                paddingHorizontal: 24,
+                backgroundColor: colors.card,
+                borderRadius: 24,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: colors.border,
+              }}>
+                <Ionicons 
+                  name={taskFilter === 'active' ? "checkmark-circle-outline" : "stats-chart-outline"} 
+                  size={58} 
+                  color={colors.textTertiary} 
+                />
+                <Text style={{
+                  fontSize: 20,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.text,
+                  marginTop: 16,
+                  fontFamily: getFontFamily('bold', 'display'),
+                }}>
+                  {taskFilter === 'active' ? 'Wszystko gotowe!' : 'Brak zrealizowanych zadań'}
+                </Text>
+                <Text style={{
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 8,
+                  lineHeight: 22,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  {taskFilter === 'active' 
+                    ? 'Dodaj pierwsze zadanie i zacznij tworzyć swoją idealną rutynę dnia.'
+                    : 'Zakończ zadanie, aby pojawiło się tutaj.'}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Sekcja Szybkie akcje */}
+          <View style={{ paddingHorizontal: 20, marginTop: 32 }}>
+            <View style={{
+              backgroundColor: colors.card,
+              borderRadius: 24,
+              padding: 24,
+              boxShadow: '0 2px 8px rgba(139, 111, 71, 0.05)',
+              elevation: 4,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}>
+              <Text style={{
+                fontSize: 22,
+                fontWeight: getFontWeight('bold'),
+                color: colors.text,
+                marginBottom: 16,
+                fontFamily: getFontFamily('bold', 'display'),
+              }}>
+                Szybkie akcje
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <Pressable
+                  onPress={() => {
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/');
+                  }}
+                  onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.activeBg,
+                    borderRadius: 20,
+                    padding: 18,
+                    borderWidth: 1,
+                    borderColor: colors.active,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="home" size={24} color={colors.primary} />
+                  </View>
+                  <Text style={{
+                    fontSize: 17,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.text,
+                    marginBottom: 4,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    Strona główna
+                  </Text>
+                  <Text style={{
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Powrót do planera
+                  </Text>
+                </Pressable>
+                
+                <Pressable
+                  onPress={() => {
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/calendar');
+                  }}
+                  onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.completedBg,
+                    borderRadius: 20,
+                    padding: 18,
+                    borderWidth: 1,
+                    borderColor: colors.completed,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="calendar" size={24} color={colors.primary} />
+                  </View>
+                  <Text style={{
+                    fontSize: 17,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.text,
+                    marginBottom: 4,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    Kalendarz
+                  </Text>
+                  <Text style={{
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Zobacz harmonogram
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          {/* Sekcja Wszystkie aktywne zadania */}
+          <View style={{ paddingHorizontal: 20, marginTop: 32 }}>
+            {activeTasks.length > 0 ? (
+              <View style={{ marginBottom: 32 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <Text style={{
+                    fontSize: 22,
+                    fontWeight: getFontWeight('bold'),
+                    color: colors.text,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    Wszystkie aktywne zadania
+                  </Text>
               <View style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -316,188 +563,161 @@ export default function TasksScreen() {
                 }} />
                 <Text style={{
                   fontSize: 12,
-                  fontWeight: '600',
+                  fontWeight: getFontWeight('600'),
                   color: colors.primary,
                   textTransform: 'uppercase',
                   letterSpacing: 0.5,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                  fontFamily: getFontFamily('normal', 'text'),
                 }}>
                   W trakcie
                 </Text>
               </View>
             </View>
 
-            {activeTasks.map((task, index) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                onToggle={() => handleToggle(task.id)}
-                onEdit={() => handleEdit(task)}
-                onDelete={() => handleDelete(task.id)}
-                index={index}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={{
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingVertical: 64,
-            paddingHorizontal: 24,
-            backgroundColor: colors.card,
-            borderRadius: 24,
-            borderWidth: 1,
-            borderStyle: 'dashed',
-            borderColor: colors.border,
-            marginBottom: 32,
-          }}>
-            <Ionicons name="checkmark-circle-outline" size={64} color={colors.textTertiary} />
-            <Text style={{
-              fontSize: 20,
-              fontWeight: '600',
-              color: colors.text,
-              marginTop: 16,
-              fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-            }}>
-              Brak zadań oczekujących
-            </Text>
-            <Text style={{
-              fontSize: 15,
-              color: colors.textSecondary,
-              textAlign: 'center',
-              marginTop: 8,
-              lineHeight: 22,
-              fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-            }}>
-              Wszystko zrealizowane! Dodaj nowe cele, by utrzymać tempo.
-            </Text>
-          </View>
-        )}
-
-        <View style={{ marginTop: 8 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <Text style={{
-              fontSize: 22,
-              fontWeight: 'bold',
-              color: colors.text,
-              fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-            }}>
-              Historia
-            </Text>
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: colors.completedBg,
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: colors.completed,
-            }}>
-              <View style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: colors.completed,
-                marginRight: 6,
-              }} />
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '600',
-                color: colors.primary,
-                textTransform: 'uppercase',
-                letterSpacing: 0.5,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-              }}>
-                Sukcesy
-              </Text>
-            </View>
+                  {activeTasks.map((task, index) => (
+                    <TaskItem
+                      key={task.id}
+                      task={task}
+                      onToggle={() => handleToggle(task.id)}
+                      onEdit={() => handleEdit(task)}
+                      onDelete={() => handleDelete(task.id)}
+                      index={index}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <View style={{
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 64,
+                  paddingHorizontal: 24,
+                  backgroundColor: colors.card,
+                  borderRadius: 24,
+                  borderWidth: 1,
+                  borderStyle: 'dashed',
+                  borderColor: colors.border,
+                  marginBottom: 32,
+                }}>
+                  <Ionicons name="checkmark-circle-outline" size={64} color={colors.textTertiary} />
+                  <Text style={{
+                    fontSize: 20,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.text,
+                    marginTop: 16,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
+                    Brak zadań oczekujących
+                  </Text>
+                  <Text style={{
+                    fontSize: 15,
+                    color: colors.textSecondary,
+                    textAlign: 'center',
+                    marginTop: 8,
+                    lineHeight: 22,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Wszystko zrealizowane! Dodaj nowe cele, by utrzymać tempo.
+                  </Text>
+                </View>
+              )}
           </View>
 
-          {completedTasks.length > 0 ? (
-            completedTasks.map((task, index) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                onToggle={() => handleToggle(task.id)}
-                onEdit={() => handleEdit(task)}
-                onDelete={() => handleDelete(task.id)}
-                index={index}
-              />
-            ))
-          ) : (
-            <View style={{
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingVertical: 48,
-              paddingHorizontal: 24,
-              backgroundColor: colors.card,
-              borderRadius: 24,
-              borderWidth: 1,
-              borderStyle: 'dashed',
-              borderColor: colors.border,
-            }}>
-              <Ionicons name="stats-chart-outline" size={58} color={colors.textTertiary} />
+          {/* Sekcja Historia */}
+          <View 
+            ref={historySectionRef} 
+            onLayout={(event) => {
+              const { y } = event.nativeEvent.layout;
+              setHistorySectionY(y);
+            }}
+            style={{ paddingHorizontal: 20, marginTop: 8 }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{
-                fontSize: 20,
-                fontWeight: '600',
+                fontSize: 22,
+                fontWeight: getFontWeight('bold'),
                 color: colors.text,
-                marginTop: 16,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                fontFamily: getFontFamily('bold', 'display'),
               }}>
-                Brak ukończonych zadań
+                Historia
               </Text>
-              <Text style={{
-                fontSize: 15,
-                color: colors.textSecondary,
-                textAlign: 'center',
-                marginTop: 8,
-                lineHeight: 22,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: colors.completedBg,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: colors.completed,
               }}>
-                Zakończ zadanie, aby pojawiło się w historii sukcesów.
-              </Text>
+                <View style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: colors.completed,
+                  marginRight: 6,
+                }} />
+                <Text style={{
+                  fontSize: 12,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.primary,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  Sukcesy
+                </Text>
+              </View>
             </View>
-          )}
-        </View>
-      </Animated.ScrollView>
 
-      <Animated.View
-        style={[
-          fabAnimatedStyle,
-          {
-            position: 'absolute',
-            bottom: 69 + insets.bottom, // 20px padding + 49px tab bar height
-            right: 20,
-          },
-        ]}
-      >
-        <Pressable
-          onPress={handleAdd}
-          onPressIn={() => {
-            fabScale.value = withSpring(0.9, { damping: 15 });
-            impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }}
-          onPressOut={() => {
-            fabScale.value = withSpring(1, { damping: 15 });
-          }}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: colors.primary,
-            shadowColor: colors.primary,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 12,
-            elevation: 8,
-          }}
-        >
-          <Ionicons name="add" size={28} color="#FFFFFF" />
-        </Pressable>
-      </Animated.View>
+            {completedTasks.length > 0 ? (
+              completedTasks.map((task, index) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  onToggle={() => handleToggle(task.id)}
+                  onEdit={() => handleEdit(task)}
+                  onDelete={() => handleDelete(task.id)}
+                  index={index}
+                />
+              ))
+            ) : (
+              <View style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 48,
+                paddingHorizontal: 24,
+                backgroundColor: colors.card,
+                borderRadius: 24,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: colors.border,
+              }}>
+                <Ionicons name="stats-chart-outline" size={58} color={colors.textTertiary} />
+                <Text style={{
+                  fontSize: 20,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.text,
+                  marginTop: 16,
+                  fontFamily: getFontFamily('bold', 'display'),
+                }}>
+                  Brak ukończonych zadań
+                </Text>
+                <Text style={{
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 8,
+                  lineHeight: 22,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  Zakończ zadanie, aby pojawiło się w historii sukcesów.
+                </Text>
+              </View>
+            )}
+          </View>
+        </Animated.View>
+      </Animated.ScrollView>
 
       <TaskForm
         visible={showForm}
@@ -511,3 +731,4 @@ export default function TasksScreen() {
     </View>
   );
 }
+

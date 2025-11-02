@@ -1,17 +1,17 @@
-import { memo, useMemo, useEffect } from 'react';
+import { memo, useMemo, useState, useEffect } from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, {
+import {
+  Animated,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
   withSequence,
-  withDelay,
-  interpolate,
-} from 'react-native-reanimated';
+} from '../../utils/animationHelpers';
 import { impactAsync, notificationAsync } from '../../utils/haptics';
 import * as Haptics from 'expo-haptics';
+import { getFontFamily, getFontWeight } from '../../utils/fontHelpers';
 
 // Color palette - brown/beige theme
 const colors = {
@@ -31,39 +31,59 @@ const colors = {
 const priorityConfig = {
   high: {
     label: 'Wysoki',
-    color: '#C4A484',
-    bgColor: '#F0E6D2',
-    borderColor: '#E8DDD1',
+    color: '#D32F2F',
+    bgColor: '#FFEBEE',
+    borderColor: '#EF5350',
   },
   medium: {
     label: 'Średni',
-    color: '#A0826D',
-    bgColor: '#F5F1E8',
-    borderColor: '#E8DDD1',
+    color: '#F57C00',
+    bgColor: '#FFF3E0',
+    borderColor: '#FF9800',
   },
   low: {
     label: 'Niski',
-    color: '#8B6F47',
-    bgColor: '#FAF7F3',
-    borderColor: '#E8DDD1',
+    color: '#388E3C',
+    bgColor: '#E8F5E9',
+    borderColor: '#66BB6A',
   },
 };
 
 const getPriorityConfig = (priority) =>
   priorityConfig[priority] || priorityConfig.medium;
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const priority = useMemo(
     () => getPriorityConfig(task.priority),
     [task.priority]
   );
   const scale = useSharedValue(1);
-  const checkmarkScale = useSharedValue(task.completed ? 1 : 0);
-  const checkmarkRotation = useSharedValue(task.completed ? 1 : 0);
-  const opacity = useSharedValue(0);
-  const cardTranslate = useSharedValue(30);
+  const checkmarkScale = useSharedValue(0);
+  const checkmarkRotation = useSharedValue(0);
+  const opacity = useSharedValue(1);
+  const cardTranslate = useSharedValue(0);
+
+  // Sync shared values with task.completed prop
+  // Initialize immediately on mount to avoid flash
+  useEffect(() => {
+    const initialValue = task.completed ? 1 : 0;
+    checkmarkScale.value = initialValue;
+    checkmarkRotation.value = initialValue;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
+
+  // Update when task.completed changes
+  useEffect(() => {
+    if (task.completed) {
+      checkmarkScale.value = 1;
+      checkmarkRotation.value = 1;
+    } else {
+      checkmarkScale.value = 0;
+      checkmarkRotation.value = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.completed]);
 
   const formattedDate = useMemo(() => {
     if (!task.dueDate) {
@@ -81,12 +101,6 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
       year: 'numeric',
     });
   }, [task.dueDate]);
-
-  // Entrance animation
-  useEffect(() => {
-    cardTranslate.value = withDelay(index * 50, withSpring(0, { damping: 15, stiffness: 100 }));
-    opacity.value = withDelay(index * 50, withSpring(1, { damping: 15 }));
-  }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -128,14 +142,34 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
     onToggle();
   };
 
-  const handleDelete = () => {
-    // Animacja usuwania - zmniejszamy wysokość i opacity
+  const handleDeletePress = () => {
+    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsConfirmingDelete(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Zamknij tryb potwierdzania natychmiast
+    setIsConfirmingDelete(false);
+    
+    // Natychmiastowe usuwanie - animacja znikania
     opacity.value = withTiming(0, { duration: 200 });
     cardTranslate.value = withTiming(300, { duration: 200 });
-    scale.value = withTiming(0.8, { duration: 200 });
-    setTimeout(() => {
-      onDelete();
-    }, 200);
+    
+    // Wywołaj onDelete i poczekaj na zakończenie
+    try {
+      await onDelete();
+    } catch (error) {
+      // Jeśli błąd, przywróć widok zadania
+      console.error('[TaskItem] Error deleting task:', error);
+      opacity.value = withTiming(1, { duration: 200 });
+      cardTranslate.value = withTiming(0, { duration: 200 });
+    }
+  };
+
+  const handleCancelDelete = () => {
+    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsConfirmingDelete(false);
   };
 
   const handleEdit = () => {
@@ -144,11 +178,12 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
   };
 
   return (
-    <AnimatedPressable
+    <Animated.Pressable
       style={[animatedStyle]}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       onPress={handleToggle}
+      disabled={isConfirmingDelete}
     >
       <View style={{
         backgroundColor: colors.card,
@@ -157,149 +192,208 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
         paddingVertical: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: isConfirmingDelete ? '#D32F2F' : colors.border,
         shadowColor: colors.primary,
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
         shadowRadius: 8,
         elevation: 2,
       }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Pressable
-            onPress={handleToggle}
-            style={{ flexDirection: 'row', flex: 1, alignItems: 'flex-start' }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <View style={{ marginRight: 16, marginTop: 2 }}>
-              <View
+        {isConfirmingDelete ? (
+          <View style={{ flexDirection: 'column', gap: 12 }}>
+            <Text style={{
+              fontSize: 17,
+              fontWeight: getFontWeight('600'),
+              color: colors.text,
+              textAlign: 'center',
+              marginBottom: 8,
+              fontFamily: getFontFamily('600', 'text'),
+            }}>
+              Usunąć to zadanie?
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <Pressable
+                onPress={handleCancelDelete}
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  borderWidth: 2,
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: colors.completedBg,
+                  borderWidth: 1,
+                  borderColor: colors.border,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: task.completed ? colors.completed : colors.card,
-                  borderColor: task.completed ? colors.completed : colors.border,
                 }}
               >
-                <Animated.View style={checkmarkStyle}>
-                  {task.completed && (
-                    <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                  )}
-                </Animated.View>
-              </View>
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <Text
-                  style={{
-                    fontSize: 17,
-                    fontWeight: '600',
-                    color: task.completed ? colors.textTertiary : colors.text,
-                    textDecorationLine: task.completed ? 'line-through' : 'none',
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                    flex: 1,
-                  }}
-                >
-                  {task.title}
+                <Text style={{
+                  fontSize: 16,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.text,
+                  fontFamily: getFontFamily('600', 'text'),
+                }}>
+                  Anuluj
                 </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleConfirmDelete}
+                style={{
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: '#D32F2F',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{
+                  fontSize: 16,
+                  fontWeight: getFontWeight('600'),
+                  color: '#FFFFFF',
+                  fontFamily: getFontFamily('600', 'text'),
+                }}>
+                  Usuń
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <Pressable
+              onPress={handleToggle}
+              style={{ flexDirection: 'row', flex: 1, alignItems: 'flex-start' }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <View style={{ marginRight: 16, marginTop: 2 }}>
                 <View
                   style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 12,
-                    backgroundColor: priority.bgColor,
-                    borderWidth: 1,
-                    borderColor: priority.borderColor,
-                    marginLeft: 8,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    borderWidth: 2,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: task.completed ? colors.completed : colors.card,
+                    borderColor: task.completed ? colors.completed : colors.border,
                   }}
                 >
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontWeight: '600',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.5,
-                      color: priority.color,
-                      fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                    }}
-                  >
-                    {priority.label}
-                  </Text>
+                  <Animated.View style={checkmarkStyle}>
+                    {task.completed && (
+                      <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                    )}
+                  </Animated.View>
                 </View>
               </View>
 
-              {task.description ? (
-                <Text style={{
-                  fontSize: 15,
-                  color: colors.textSecondary,
-                  marginTop: 8,
-                  lineHeight: 20,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                }}>
-                  {task.description}
-                </Text>
-              ) : null}
-
-              {formattedDate ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: colors.completedBg,
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                  }}>
-                    <Ionicons name="calendar-outline" size={13} color={colors.textTertiary} />
-                    <Text style={{
-                      fontSize: 12,
-                      fontWeight: '500',
-                      color: colors.textSecondary,
-                      marginLeft: 6,
-                      fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-                    }}>
-                      {formattedDate}
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text
+                    style={{
+                      fontSize: 17,
+                      fontWeight: getFontWeight('600'),
+                      color: task.completed ? colors.textTertiary : colors.text,
+                      textDecorationLine: task.completed ? 'line-through' : 'none',
+                      fontFamily: getFontFamily('600', 'text'),
+                      flex: 1,
+                    }}
+                  >
+                    {task.title}
+                  </Text>
+                  <View
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 12,
+                      backgroundColor: priority.bgColor,
+                      borderWidth: 1,
+                      borderColor: priority.borderColor,
+                      marginLeft: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: getFontWeight('600'),
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                        color: priority.color,
+                        fontFamily: getFontFamily('600', 'text'),
+                      }}
+                    >
+                      {priority.label}
                     </Text>
                   </View>
                 </View>
-              ) : null}
+
+                {task.description ? (
+                  <Text style={{
+                    fontSize: 15,
+                    color: colors.textSecondary,
+                    marginTop: 8,
+                    lineHeight: 20,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    {task.description}
+                  </Text>
+                ) : null}
+
+                {formattedDate ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: colors.completedBg,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}>
+                      <Ionicons name="calendar-outline" size={14} color={colors.textTertiary} />
+                      <Text style={{
+                        fontSize: 13,
+                        fontWeight: getFontWeight('500'),
+                        color: colors.textSecondary,
+                        marginLeft: 6,
+                        fontFamily: getFontFamily('500', 'text'),
+                      }}>
+                        {formattedDate}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            </Pressable>
+
+            <View style={{ flexDirection: 'row', marginLeft: 12 }}>
+              <Pressable
+                onPress={handleEdit}
+                style={{
+                  padding: 10,
+                  backgroundColor: colors.completedBg,
+                  borderRadius: 12,
+                  marginRight: 8,
+                }}
+                hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
+              >
+                <Ionicons name="create-outline" size={18} color={colors.primary} />
+              </Pressable>
+
+              <Pressable
+                onPress={handleDeletePress}
+                style={{
+                  padding: 10,
+                  backgroundColor: '#FFEBEE',
+                  borderRadius: 12,
+                }}
+                hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
+              >
+                <Ionicons name="trash-outline" size={18} color="#D32F2F" />
+              </Pressable>
             </View>
-          </Pressable>
-
-          <View style={{ flexDirection: 'row', marginLeft: 12 }}>
-            <Pressable
-              onPress={handleEdit}
-              style={{
-                padding: 10,
-                backgroundColor: colors.completedBg,
-                borderRadius: 12,
-                marginRight: 8,
-              }}
-              hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
-            >
-              <Ionicons name="create-outline" size={18} color={colors.primary} />
-            </Pressable>
-
-            <Pressable
-              onPress={handleDelete}
-              style={{
-                padding: 10,
-                backgroundColor: '#FFEBEE',
-                borderRadius: 12,
-              }}
-              hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
-            >
-              <Ionicons name="trash-outline" size={18} color="#D32F2F" />
-            </Pressable>
           </View>
-        </View>
+        )}
       </View>
-    </AnimatedPressable>
+    </Animated.Pressable>
   );
 }
 

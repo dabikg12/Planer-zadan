@@ -71,3 +71,4 @@ npx expo install --fix
 Jeśli problemy nadal występują, sprawdź logi w terminalu.
 
 
+

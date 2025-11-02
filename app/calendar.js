@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+﻿import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Alert,
   RefreshControl,
@@ -9,8 +9,7 @@ import {
   Platform,
   LayoutAnimation,
   UIManager,
-  Dimensions,
-  StyleSheet,
+  Modal,
 } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { StatusBar } from 'expo-status-bar';
@@ -60,21 +59,21 @@ LocaleConfig.locales['pl'] = {
 };
 
 LocaleConfig.defaultLocale = 'pl';
-import Animated, {
+// Warunkowy import reanimated - użyj animationHelpers zamiast bezpośredniego importu
+import {
+  Animated,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withDelay,
-  withSequence,
-  runOnJS,
-} from 'react-native-reanimated';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+} from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
 import TaskItem from './components/TaskItem';
 import TaskForm from './components/TaskForm';
+import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -130,343 +129,179 @@ const formatDateLocal = (date) => {
   return `${year}-${month}-${day}`;
 };
 
-// Cache for date parsing to avoid repeated calculations
-const dateCache = new Map();
-
-// Optimized date parsing with cache
-const parseDueDateCached = (value) => {
-  if (!value) return null;
-  
-  const cacheKey = typeof value === 'string' ? value : JSON.stringify(value);
-  if (dateCache.has(cacheKey)) {
-    return dateCache.get(cacheKey);
-  }
-  
-  const result = parseDueDate(value);
-  if (result && dateCache.size < 1000) { // Limit cache size
-    dateCache.set(cacheKey, result);
-  }
-  return result;
-};
-
-// Styles using StyleSheet for better performance
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  contentContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  calendarCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  calendarInner: {
-    borderRadius: 16,
-  },
-  emptyStateContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingBottom: 48,
-  },
-  emptyStateIcon: {
-    fontSize: 72,
-    color: colors.textTertiary,
-  },
-  emptyStateTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: colors.text,
-    marginTop: 16,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-  },
-  emptyStateText: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 22,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-  },
-  bottomSheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderBottomWidth: 0,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 16,
-    maxHeight: '90%',
-  },
-  dragHandleContainer: {
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingTop: 16,
-  },
-  dragHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: 2,
-  },
-  tasksHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  tasksTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: colors.text,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  addButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-    marginLeft: 6,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-  },
-  emptyTasksContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 64,
-    paddingHorizontal: 24,
-    backgroundColor: colors.background,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.border,
-  },
-  emptyTasksIcon: {
-    fontSize: 64,
-    color: colors.textTertiary,
-  },
-  emptyTasksTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.text,
-    marginTop: 16,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
-  },
-  emptyTasksText: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 22,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-  },
-  addFirstTaskButton: {
-    marginTop: 24,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
-  },
-  addFirstTaskText: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
-  },
-  fabContainer: {
-    position: 'absolute',
-    right: 20,
-  },
-  fab: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-});
-
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
-  const { tasks, loadTasks, deleteTask, toggleTask } = useAppStore();
-  const [selectedDate, setSelectedDate] = useState(null);
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const { tasks, loadTasks, deleteTask, toggleTask, addTask: addTaskToStore, updateTask: updateTaskInStore } = useAppStore();
+  // Ustaw dzisiejszą datę jako domyślnie wybraną
+  const [selectedDate, setSelectedDate] = useState(() => formatDateLocal(new Date()));
   const [showForm, setShowForm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [showTaskListModal, setShowTaskListModal] = useState(false);
   const scrollViewRef = useRef(null);
-  
-  // Use shared value for screen height to avoid recalculations in gesture handler
-  const screenHeightRef = useRef(Dimensions.get('window').height);
-  const screenHeight = useSharedValue(screenHeightRef.current);
 
-  const contentOpacity = useSharedValue(0);
-  const fabScale = useSharedValue(0);
-  const fabRotation = useSharedValue(0);
-  
-  // Bottom sheet position: 0 = collapsed (at bottom), negative = expanded (covering calendar)
-  const bottomSheetTranslateY = useSharedValue(0);
-  const bottomSheetHeight = useSharedValue(0);
-  const isSheetExpanded = useSharedValue(false);
-  const startTranslateY = useSharedValue(0);
-  const maxExpandOffset = useSharedValue(-(screenHeightRef.current * 0.75));
+  const contentOpacity = useSharedValue(1);
 
   useEffect(() => {
     loadTasks();
-    contentOpacity.value = withDelay(100, withSpring(1, { damping: 15, stiffness: 100 }));
-    fabScale.value = withDelay(200, withSequence(
-      withSpring(0, { damping: 12 }),
-      withSpring(1, { damping: 12, stiffness: 200 })
-    ));
   }, []);
 
-  // Update screen height on dimension change
-  useEffect(() => {
-    const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      screenHeightRef.current = window.height;
-      screenHeight.value = window.height;
-      maxExpandOffset.value = -(window.height * 0.75);
-    });
-    return () => subscription?.remove();
-  }, []);
+  // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
+  useFocusEffect(
+    React.useCallback(() => {
+      if (params?.openForm === 'true' || params?.openForm === true) {
+        // Małe opóźnienie aby upewnić się, że ekran jest w pełni załadowany
+        setTimeout(() => {
+          setEditingTask(null);
+          setShowForm(true);
+          // Wyczyść parametr z URL
+          router.setParams({ openForm: undefined });
+        }, 100);
+      }
+    }, [params?.openForm, router])
+  );
 
-  // Reset bottom sheet position when date changes
-  useEffect(() => {
-    if (selectedDate) {
-      bottomSheetTranslateY.value = withSpring(0);
-      isSheetExpanded.value = false;
-    }
-  }, [selectedDate]);
-
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks();
+    await loadTasks(true); // Force refresh - bypass cache
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [loadTasks]);
+  };
 
-  const handleDayPress = useCallback((day) => {
+  const handleDayPress = (day) => {
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedDate(day.dateString);
-  }, []);
+  };
 
-  const handleAddTaskForDate = useCallback((date) => {
+  const handleAddTaskForDate = (date) => {
     impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    fabRotation.value = withSequence(
-      withSpring(45, { damping: 12 }),
-      withSpring(0, { damping: 12 })
-    );
     setEditingTask(null);
     setSelectedDate(date);
     setShowForm(true);
-  }, []);
+  };
 
-  const handleFormSubmit = useCallback(async (taskData) => {
-    if (editingTask) {
-      await useAppStore.getState().updateTask(editingTask.id, taskData);
-    } else {
-      const finalTaskData = {
-        ...taskData,
-        dueDate: taskData.dueDate || selectedDate,
-      };
-      await useAppStore.getState().addTask(finalTaskData);
+  const handleFormSubmit = async (taskData) => {
+    try {
+        if (editingTask) {
+          await updateTaskInStore(editingTask.id, taskData);
+        } else {
+          const finalTaskData = {
+            ...taskData,
+            dueDate: taskData.dueDate || selectedDate,
+          };
+          await addTaskToStore(finalTaskData);
+        }
+        setEditingTask(null);
+    } catch (error) {
+      console.error('[Calendar] Error submitting task form:', error);
+      Alert.alert(
+        'Błąd',
+        error.message || 'Nie udało się zapisać zadania. Spróbuj ponownie.',
+        [{ text: 'OK' }]
+      );
     }
-    await loadTasks();
-    setEditingTask(null);
-  }, [editingTask, selectedDate, loadTasks]);
+  };
 
-  const handleDelete = useCallback((id) => {
-    Alert.alert(
-      'Usuń zadanie',
-      'Czy na pewno chcesz usunąć to zadanie?',
-      [
-        { text: 'Anuluj', style: 'cancel' },
-        {
-          text: 'Usuń',
-          style: 'destructive',
-          onPress: async () => {
-            LayoutAnimation.configureNext({
-              duration: 250,
-              create: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-              update: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-              },
-              delete: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-            });
-            
-            await deleteTask(id);
-            await loadTasks();
-            notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          },
+  const handleDelete = async (id) => {
+    try {
+      // Skonfiguruj animację układu przed usunięciem - pozwoli na płynne przesunięcie pozostałych elementów
+      LayoutAnimation.configureNext({
+        duration: 250,
+        create: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
         },
-      ]
-    );
-  }, [deleteTask, loadTasks]);
+        update: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+        },
+        delete: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
+        },
+      });
+      
+      // Usuń zadanie - potwierdzenie jest już w TaskItem
+      await deleteTask(id);
+      notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (error) {
+      console.error('[Calendar] Error deleting task:', error);
+      // Błąd już został obsłużony w TaskItem (przywrócenie widoku)
+      // Nie pokazujemy Alert - błąd jest już obsłużony wizualnie
+    }
+  };
 
-  const handleToggle = useCallback(async (id) => {
-    await toggleTask(id);
-  }, [toggleTask]);
+  const handleToggle = async (id) => {
+    try {
+      await toggleTask(id);
+    } catch (error) {
+      console.error('[Calendar] Error toggling task:', error);
+      Alert.alert('Błąd', 'Nie udało się zaktualizować zadania. Spróbuj ponownie.', [{ text: 'OK' }]);
+    }
+  };
 
-  const handleEdit = useCallback((task) => {
+  const handleEdit = (task) => {
     setEditingTask(task);
     setShowForm(true);
-  }, []);
+  };
+
+  // Zadania bez daty - można przypisać do wybranej daty
+  const tasksWithoutDate = useMemo(() => {
+    return tasks.filter((task) => {
+      // Tylko aktywne zadania bez daty
+      if (task.completed) {
+        return false;
+      }
+      const date = parseDueDate(task.dueDate);
+      return !date;
+    });
+  }, [tasks]);
+
+  const handleAddFromList = () => {
+    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (tasksWithoutDate.length === 0) {
+      Alert.alert(
+        'Brak zadań',
+        'Nie ma żadnych zadań bez przypisanej daty. Dodaj najpierw zadanie na liście zadań.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    setShowTaskListModal(true);
+  };
+
+  const handleAssignTaskToDate = async (taskId) => {
+    try {
+      impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await updateTaskInStore(taskId, { dueDate: selectedDate });
+      setShowTaskListModal(false);
+      notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.error('[Calendar] Error assigning task to date:', error);
+      Alert.alert('Błąd', 'Nie udało się przypisać zadania do daty. Spróbuj ponownie.', [{ text: 'OK' }]);
+    }
+  };
 
   const markedDates = useMemo(() => {
     const marks = {};
+
     const priorityColors = {
-      high: colors.accent,
-      medium: colors.primaryLight,
-      low: colors.primary,
+      high: '#D32F2F',
+      medium: '#F57C00',
+      low: '#388E3C',
     };
 
-    // Optimized: use cached date parsing
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const date = parseDueDateCached(task.dueDate);
-      if (!date) continue;
+    tasks.forEach((task) => {
+      const date = parseDueDate(task.dueDate);
+      if (!date) {
+        return;
+      }
 
       const dateKey = formatDateLocal(date);
-      if (!dateKey) continue;
-      
+      if (!dateKey) {
+        return;
+      }
       if (!marks[dateKey]) {
         marks[dateKey] = { dots: [] };
       }
@@ -474,7 +309,7 @@ export default function CalendarScreen() {
       marks[dateKey].dots.push({
         color: priorityColors[task.priority] || colors.textTertiary,
       });
-    }
+    });
 
     if (selectedDate) {
       marks[selectedDate] = {
@@ -492,100 +327,140 @@ export default function CalendarScreen() {
       return [];
     }
 
-    const result = [];
-    // Optimized: use cached date parsing and early return
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const date = parseDueDateCached(task.dueDate);
-      if (!date) continue;
+    return tasks.filter((task) => {
+      const date = parseDueDate(task.dueDate);
+      if (!date) {
+        return false;
+      }
 
       const taskDateKey = formatDateLocal(date);
-      if (taskDateKey === selectedDate) {
-        result.push(task);
-      }
-    }
-    return result;
+      return taskDateKey === selectedDate;
+    });
   }, [tasks, selectedDate]);
 
   const contentAnimatedStyle = useAnimatedStyle(() => ({
     opacity: contentOpacity.value,
   }));
 
-  const fabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: fabScale.value },
-      { rotate: `${fabRotation.value}deg` }
-    ],
-  }));
-
-  // Gesture handler for bottom sheet dragging - optimized with pre-calculated values
-  const panGesture = useMemo(() => Gesture.Pan()
-    .onStart(() => {
-      startTranslateY.value = bottomSheetTranslateY.value;
-      runOnJS(impactAsync)(Haptics.ImpactFeedbackStyle.Light);
-    })
-    .onUpdate((event) => {
-      // Only allow dragging if moving upward (negative translationY)
-      // This prevents conflicts with ScrollView scrolling
-      if (event.translationY < 0 || bottomSheetTranslateY.value < 0) {
-        const newTranslateY = startTranslateY.value + event.translationY;
-        // Use pre-calculated maxExpandOffset instead of recalculating
-        bottomSheetTranslateY.value = Math.max(maxExpandOffset.value, Math.min(0, newTranslateY));
-      }
-    })
-    .onEnd((event) => {
-      // Snap to collapsed or expanded based on velocity and position
-      const threshold = -150; // If dragged more than 150px up, expand
-      const velocityThreshold = -500; // Fast upward swipe expands
-      
-      const currentTranslate = bottomSheetTranslateY.value;
-      
-      if (currentTranslate < threshold || event.velocityY < velocityThreshold) {
-        // Expand - move sheet up to cover calendar
-        bottomSheetTranslateY.value = withSpring(maxExpandOffset.value, {
-          damping: 20,
-          stiffness: 90,
-        });
-        isSheetExpanded.value = true;
-        runOnJS(impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
-      } else {
-        // Collapse - return to bottom
-        bottomSheetTranslateY.value = withSpring(0, {
-          damping: 20,
-          stiffness: 90,
-        });
-        isSheetExpanded.value = false;
-        runOnJS(impactAsync)(Haptics.ImpactFeedbackStyle.Light);
-      }
-    }), []);
-
-  const bottomSheetAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ translateY: bottomSheetTranslateY.value }],
-    };
-  });
+  // Niestandardowy komponent dnia - kropki POD przyciskiem, nie wewnątrz
+  // Działa zarówno na web jak i mobile
+  const renderDayComponent = ({ date, state, marking, onPress }) => {
+    if (!date || !date.dateString) {
+      return <View style={{ flex: 1, minHeight: 50 }} />;
+    }
+    
+    const dateKey = date.dateString;
+    const isSelected = selectedDate === dateKey;
+    const isToday = dateKey === formatDateLocal(new Date());
+    const isDisabled = state === 'disabled';
+    
+    // Pobierz kropki z markedDates dla tego dnia
+    const dayMarking = marking || markedDates[dateKey];
+    const hasDots = dayMarking && dayMarking.dots && dayMarking.dots.length > 0;
+    
+    return (
+      <View style={{ 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        alignSelf: 'center',
+        minHeight: 36,
+        overflow: 'visible',
+        position: 'relative',
+      }}>
+        {/* Przycisk z numerem dnia - osobny komponent */}
+        <Pressable
+          onPress={() => {
+            if (!isDisabled && onPress) {
+              onPress(date);
+            }
+          }}
+          disabled={isDisabled}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: isSelected ? colors.primary : 'transparent',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'visible',
+          }}
+        >
+          <Text style={{
+            fontSize: 16,
+            fontWeight: getFontWeight('600'),
+            color: isDisabled 
+              ? colors.border 
+              : isSelected 
+                ? '#FFFFFF' 
+                : (isToday ? colors.primary : colors.text),
+            fontFamily: getFontFamily('600', 'text'),
+          }}>
+            {date.day}
+          </Text>
+        </Pressable>
+        
+        {/* Kropki wyświetlane POD przyciskiem - pozycjonowane absolutnie, nie zajmują miejsca */}
+        {hasDots && !isDisabled && (
+          <View style={{ 
+            flexDirection: 'row', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            position: 'absolute',
+            top: 40,
+            left: 0,
+            right: 0,
+            pointerEvents: 'none',
+          }}>
+            {dayMarking.dots.slice(0, 3).map((dot, index) => (
+              <View
+                key={`dot-${dateKey}-${index}`}
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: 2.5,
+                  backgroundColor: dot.color || colors.primaryLight,
+                  marginLeft: index === 0 ? 0 : 1.5,
+                  marginRight: index === dayMarking.dots.slice(0, 3).length - 1 ? 0 : 1.5,
+                }}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style="dark" />
-      <Animated.View style={[{ flex: 1, paddingTop: Math.max(insets.top, 20) }, styles.contentContainer, contentAnimatedStyle]}>
-        <View style={styles.calendarCard}>
+      <Animated.View style={[{ flex: 1, paddingTop: 32, paddingHorizontal: 20 }, contentAnimatedStyle]}>
+        <View style={{
+          backgroundColor: colors.card,
+          borderRadius: 24,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: colors.border,
+          boxShadow: '0 2px 8px rgba(139, 111, 71, 0.05)',
+          elevation: 4,
+        }}>
           <Calendar
             onDayPress={handleDayPress}
             markedDates={markedDates}
             markingType="multi-dot"
             firstDayOfWeek={1}
+            dayComponent={renderDayComponent}
             theme={{
               backgroundColor: colors.card,
               calendarBackground: colors.card,
               textSectionTitleColor: colors.textTertiary,
-              selectedDayBackgroundColor: colors.primary,
-              selectedDayTextColor: '#FFFFFF',
+              selectedDayBackgroundColor: 'transparent',
+              selectedDayTextColor: colors.text,
               todayTextColor: colors.primary,
+              todayBackgroundColor: 'transparent',
               dayTextColor: colors.text,
               textDisabledColor: colors.border,
-              dotColor: colors.primary,
-              selectedDotColor: '#FFFFFF',
+            dotColor: 'transparent',
+            selectedDotColor: 'transparent',
               arrowColor: colors.primary,
               monthTextColor: colors.text,
               indicatorColor: colors.primary,
@@ -597,49 +472,25 @@ export default function CalendarScreen() {
               textDayHeaderFontSize: 13,
             }}
             enableSwipeMonths
-            style={styles.calendarInner}
+            style={{
+              borderRadius: 16,
+            }}
+            renderArrow={(direction) => (
+              <Ionicons 
+                name={direction === 'left' ? 'chevron-back' : 'chevron-forward'} 
+                size={24} 
+                color={colors.primary} 
+              />
+            )}
           />
         </View>
 
-        {!selectedDate && (
-          <View style={styles.emptyStateContainer}>
-            <Ionicons name="calendar-outline" size={72} color={colors.textTertiary} />
-            <Text style={styles.emptyStateTitle}>
-              Wybierz datę
-            </Text>
-            <Text style={styles.emptyStateText}>
-              Kliknij na dzień w kalendarzu, aby zobaczyć powiązane zadania i dodać nowe.
-            </Text>
-          </View>
-        )}
-      </Animated.View>
-
-      {/* Draggable Bottom Sheet for Tasks */}
-      {selectedDate && (
-        <Animated.View
-          style={[
-            bottomSheetAnimatedStyle,
-            styles.bottomSheet,
-            { paddingBottom: insets.bottom },
-          ]}
-          onLayout={(event) => {
-            const { height } = event.nativeEvent.layout;
-            bottomSheetHeight.value = height;
-          }}
-        >
-          {/* Drag Handle */}
-          <GestureDetector gesture={panGesture}>
-            <View style={styles.dragHandleContainer}>
-              <View style={styles.dragHandle} />
-            </View>
-          </GestureDetector>
-
+        {selectedDate ? (
           <ScrollView
             ref={scrollViewRef}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 145 + insets.bottom }}
-            removeClippedSubviews={true}
+            contentContainerStyle={{ paddingBottom: 120 + insets.bottom }} // Space for glass menu (88px) + extra padding (32px)
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -651,20 +502,15 @@ export default function CalendarScreen() {
           >
             {selectedDateTasks.length > 0 ? (
               <View style={{ paddingBottom: 32 }}>
-                <View style={styles.tasksHeader}>
-                  <Text style={styles.tasksTitle}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <Text style={{
+                    fontSize: 22,
+                    fontWeight: getFontWeight('bold'),
+                    color: colors.text,
+                    fontFamily: getFontFamily('bold', 'display'),
+                  }}>
                     Zadania na {selectedDate}
                   </Text>
-                  <Pressable
-                    onPress={() => handleAddTaskForDate(selectedDate)}
-                    onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    style={styles.addButton}
-                  >
-                    <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.addButtonText}>
-                      Dodaj
-                    </Text>
-                  </Pressable>
                 </View>
 
                 {selectedDateTasks.map((task, index) => (
@@ -679,52 +525,130 @@ export default function CalendarScreen() {
                 ))}
               </View>
             ) : (
-              <View style={styles.emptyTasksContainer}>
+              <View style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 64,
+                paddingHorizontal: 24,
+                backgroundColor: colors.card,
+                borderRadius: 24,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: colors.border,
+              }}>
                 <Ionicons name="calendar-outline" size={64} color={colors.textTertiary} />
-                <Text style={styles.emptyTasksTitle}>
+                <Text style={{
+                  fontSize: 20,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.text,
+                  marginTop: 16,
+                  fontFamily: getFontFamily('600', 'display'),
+                }}>
                   Brak zadań na ten dzień
                 </Text>
-                <Text style={styles.emptyTasksText}>
+                <Text style={{
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 8,
+                  lineHeight: 22,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
                   Dodaj zadanie, aby wypełnić harmonogram i zyskać więcej kontroli.
                 </Text>
-                <Pressable
-                  onPress={() => handleAddTaskForDate(selectedDate)}
-                  onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
-                  style={styles.addFirstTaskButton}
-                >
-                  <Text style={styles.addFirstTaskText}>
-                    Dodaj pierwsze zadanie
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 24, width: '100%' }}>
+                  <Pressable
+                    onPress={() => handleAddTaskForDate(selectedDate)}
+                    onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 52,
+                      paddingHorizontal: 16,
+                      paddingVertical: 16,
+                      borderRadius: 16,
+                      backgroundColor: colors.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text 
+                      numberOfLines={2}
+                      style={{
+                        color: '#FFFFFF',
+                        fontSize: 17,
+                        fontWeight: getFontWeight('600'),
+                        fontFamily: getFontFamily('600', 'text'),
+                        textAlign: 'center',
+                        lineHeight: 22,
+                      }}>
+                      Utwórz zadanie
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleAddFromList}
+                    onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 52,
+                      paddingHorizontal: 16,
+                      paddingVertical: 16,
+                      borderRadius: 16,
+                      backgroundColor: colors.primaryLight,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexDirection: 'row',
+                    }}
+                  >
+                    <Ionicons name="list-outline" size={18} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text 
+                      numberOfLines={1}
+                      style={{
+                        color: '#FFFFFF',
+                        fontSize: 17,
+                        fontWeight: getFontWeight('600'),
+                        fontFamily: getFontFamily('600', 'text'),
+                        flexShrink: 1,
+                      }}>
+                      Z listy
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             )}
           </ScrollView>
-        </Animated.View>
-      )}
-
-      {selectedDate && (
-        <Animated.View
-          style={[
-            fabAnimatedStyle,
-            styles.fabContainer,
-            { bottom: 69 + insets.bottom },
-          ]}
-        >
-          <Pressable
-            onPress={() => handleAddTaskForDate(selectedDate)}
-            onPressIn={() => {
-              fabScale.value = withSpring(0.9, { damping: 15 });
-              impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            }}
-            onPressOut={() => {
-              fabScale.value = withSpring(1, { damping: 15 });
-            }}
-            style={styles.fab}
-          >
-            <Ionicons name="add" size={28} color="#FFFFFF" />
-          </Pressable>
-        </Animated.View>
-      )}
+        ) : (
+          <View style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 24,
+            paddingBottom: 48,
+          }}>
+            <Ionicons name="calendar-outline" size={72} color={colors.textTertiary} />
+            <Text style={{
+              fontSize: 22,
+              fontWeight: getFontWeight('600'),
+              color: colors.text,
+              marginTop: 16,
+              fontFamily: getFontFamily('600', 'display'),
+            }}>
+              Wybierz datę
+            </Text>
+            <Text style={{
+              fontSize: 15,
+              color: colors.textSecondary,
+              textAlign: 'center',
+              marginTop: 8,
+              lineHeight: 22,
+              fontFamily: getFontFamily('600', 'text'),
+            }}>
+              Kliknij na dzień w kalendarzu, aby zobaczyć powiązane zadania i dodać nowe.
+            </Text>
+          </View>
+        )}
+      </Animated.View>
 
       <TaskForm
         visible={showForm}
@@ -736,6 +660,164 @@ export default function CalendarScreen() {
         initialTask={editingTask}
         initialDate={selectedDate}
       />
+
+      {/* Modal z listą zadań bez daty */}
+      <Modal
+        visible={showTaskListModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowTaskListModal(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          justifyContent: 'flex-end',
+        }}>
+          <Pressable
+            style={{ flex: 1 }}
+            onPress={() => setShowTaskListModal(false)}
+          />
+          <View style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 32,
+            borderTopRightRadius: 32,
+            paddingHorizontal: 24,
+            paddingTop: 24,
+            paddingBottom: 40 + insets.bottom,
+            maxHeight: '80%',
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{
+                  fontSize: 28,
+                  fontWeight: getFontWeight('bold'),
+                  color: colors.text,
+                  marginBottom: 4,
+                  fontFamily: getFontFamily('bold', 'display'),
+                }}>
+                  Dodaj zadanie z listy
+                </Text>
+                <Text style={{
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  Wybierz zadanie bez daty, aby przypisać je do {selectedDate}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setShowTaskListModal(false)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 18,
+                  backgroundColor: colors.completedBg,
+                }}
+              >
+                <Ionicons name="close" size={20} color={colors.textTertiary} />
+              </Pressable>
+            </View>
+
+            {tasksWithoutDate.length > 0 ? (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                style={{ maxHeight: 400 }}
+              >
+                {tasksWithoutDate.map((task) => (
+                  <Pressable
+                    key={task.id}
+                    onPress={() => handleAssignTaskToDate(task.id)}
+                    style={{
+                      backgroundColor: colors.completedBg,
+                      borderRadius: 16,
+                      padding: 16,
+                      marginBottom: 12,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{
+                          fontSize: 17,
+                          fontWeight: getFontWeight('600'),
+                          color: colors.text,
+                          marginBottom: 4,
+                          fontFamily: getFontFamily('600', 'text'),
+                        }}>
+                          {task.title}
+                        </Text>
+                        {task.description && (
+                          <Text style={{
+                            fontSize: 15,
+                            color: colors.textSecondary,
+                            marginTop: 4,
+                            fontFamily: getFontFamily('normal', 'text'),
+                          }}>
+                            {task.description}
+                          </Text>
+                        )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                          <View style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 12,
+                            backgroundColor: task.priority === 'high' ? '#FFEBEE' : task.priority === 'medium' ? '#FFF3E0' : '#E8F5E9',
+                            borderWidth: 1,
+                            borderColor: task.priority === 'high' ? '#EF5350' : task.priority === 'medium' ? '#FF9800' : '#66BB6A',
+                          }}>
+                            <Text style={{
+                              fontSize: 11,
+                              fontWeight: getFontWeight('600'),
+                              textTransform: 'uppercase',
+                              color: task.priority === 'high' ? '#D32F2F' : task.priority === 'medium' ? '#F57C00' : '#388E3C',
+                              fontFamily: getFontFamily('600', 'text'),
+                            }}>
+                              {task.priority === 'high' ? 'Wysoki' : task.priority === 'medium' ? 'Średni' : 'Niski'}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} style={{ marginLeft: 12 }} />
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 48,
+              }}>
+                <Ionicons name="list-outline" size={64} color={colors.textTertiary} />
+                <Text style={{
+                  fontSize: 20,
+                  fontWeight: getFontWeight('600'),
+                  color: colors.text,
+                  marginTop: 16,
+                  fontFamily: getFontFamily('600', 'display'),
+                }}>
+                  Brak zadań bez daty
+                </Text>
+                <Text style={{
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 8,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  Wszystkie zadania mają już przypisaną datę lub zostały ukończone.
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+

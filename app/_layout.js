@@ -1,67 +1,62 @@
-﻿import "react-native-gesture-handler";
-import { Stack } from "expo-router";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+// Warunkowy import gesture-handler tylko dla mobilnych platform
+import React from 'react';
+import { Platform, View } from 'react-native';
+if (Platform.OS !== 'web') {
+  require("react-native-gesture-handler");
+}
+
+let GestureHandlerRootView = View;
+if (Platform.OS !== 'web') {
+  try {
+    GestureHandlerRootView = require("react-native-gesture-handler").GestureHandlerRootView;
+  } catch (e) {
+    // Fallback do View jeśli nie można załadować
+  }
+}
+
+// Warunkowy import SafeAreaProvider dla web
+let SafeAreaProvider;
+if (Platform.OS !== 'web') {
+  try {
+    const SafeAreaContext = require("react-native-safe-area-context");
+    SafeAreaProvider = SafeAreaContext.SafeAreaProvider;
+    // Sprawdź czy to faktycznie komponent (funkcja lub klasa)
+    if (typeof SafeAreaProvider !== 'function') {
+      SafeAreaProvider = View;
+    }
+  } catch (e) {
+    // Fallback do View jeśli nie można załadować
+    SafeAreaProvider = View;
+  }
+} else {
+  // Na webie używamy View jako wrapper (SafeAreaProvider nie działa dobrze na web)
+  SafeAreaProvider = ({ children, ...props }) => <View style={{ flex: 1 }} {...props}>{children}</View>;
+}
+
 import '../global.css';
 import { Tabs } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform } from 'react-native';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import CustomTabBar from './components/CustomTabBar';
 
 const queryClient = new QueryClient();
 
 function TabNavigator() {
-  const insets = useSafeAreaInsets();
-
-  // Color palette - brown/beige theme
-  const colors = {
-    primary: '#8B6F47',
-    inactive: '#A0826D',
-    background: '#FEFCFB',
-    border: '#E8DDD1',
-  };
-
   return (
     <Tabs
+      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.inactive,
-        tabBarStyle: {
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 49 + (insets.bottom || 0),
-          paddingBottom: insets.bottom || 0,
-          paddingTop: 8,
-          borderTopWidth: 1,
-          borderTopColor: colors.border,
-          backgroundColor: Platform.OS === 'ios' ? 'rgba(254, 252, 251, 0.95)' : colors.background,
-          elevation: 0,
-          shadowColor: colors.primary,
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-        },
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '600',
-          marginTop: 4,
-        },
-        tabBarIconStyle: {
-          marginTop: 4,
-        },
       }}
     >
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Strona glowna',
+            title: 'Strona główna',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="home" size={size} color={color} />
             ),
-            tabBarLabel: 'Glowna',
+            tabBarLabel: 'Główna',
           }}
         />
         <Tabs.Screen
@@ -84,25 +79,13 @@ function TabNavigator() {
             tabBarLabel: 'Kalendarz',
           }}
         />
-        <Tabs.Screen
-          name="components/TaskForm"
-          options={{
-            href: null, // Hide from tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="components/TaskItem"
-          options={{
-            href: null, // Hide from tab bar
-          }}
-        />
     </Tabs>
   );
 }
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, pointerEvents: 'auto' }}>
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <TabNavigator />

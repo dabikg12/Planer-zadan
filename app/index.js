@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   RefreshControl,
   Text,
@@ -11,23 +11,22 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, {
+import {
+  Animated,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withTiming,
-  withDelay,
-  withSequence,
-  interpolate,
-} from 'react-native-reanimated';
+} from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
-import { initDatabase } from '../db/database';
 import TaskItem from './components/TaskItem';
 import TaskForm from './components/TaskForm';
+import OnboardingScreen from './components/OnboardingScreen';
+import { initializeMetadata, getMetadata } from '../utils/appMetadata';
+import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
 
 // Color palette - brown/beige theme
 const colors = {
@@ -47,7 +46,7 @@ const colors = {
 };
 
 // StatCard Component
-const StatCard = ({ label, value, backgroundColor, borderColor }) => {
+const StatCard = ({ label, value, backgroundColor, borderColor, onPress }) => {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -56,6 +55,7 @@ const StatCard = ({ label, value, backgroundColor, borderColor }) => {
   return (
     <Animated.View style={[{ flex: 1 }, animatedStyle]}>
       <Pressable
+        onPress={onPress}
         onPressIn={() => {
           scale.value = withSpring(0.96, { damping: 15 });
           impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -73,20 +73,20 @@ const StatCard = ({ label, value, backgroundColor, borderColor }) => {
       >
         <Text style={{
           fontSize: 13,
-          fontWeight: '600',
+          fontWeight: getFontWeight('600'),
           color: colors.primary,
           textTransform: 'uppercase',
           letterSpacing: 1,
           marginBottom: 8,
-          fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+          fontFamily: getFontFamily('600', 'text'),
         }}>
           {label}
         </Text>
         <Text style={{
           fontSize: 32,
-          fontWeight: 'bold',
+          fontWeight: getFontWeight('bold'),
           color: colors.text,
-          fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+          fontFamily: getFontFamily('bold', 'display'),
         }}>
           {value}
         </Text>
@@ -98,141 +98,148 @@ const StatCard = ({ label, value, backgroundColor, borderColor }) => {
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tasks, loadTasks, deleteTask, toggleTask } = useAppStore();
+  const params = useLocalSearchParams();
+  const { tasks, loadTasks, deleteTask, toggleTask, addTask: addTaskToStore, updateTask: updateTaskInStore } = useAppStore();
   const [showForm, setShowForm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [initialized, setInitialized] = useState(false);
+  const [taskFilter, setTaskFilter] = useState('active'); // 'active' lub 'completed'
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [userName, setUserName] = useState(null);
 
-  const heroOpacity = useSharedValue(0);
-  const heroTranslate = useSharedValue(30);
-  const cardsOpacity = useSharedValue(0);
-  const cardsTranslate = useSharedValue(40);
-  const fabScale = useSharedValue(0);
-  const fabRotation = useSharedValue(0);
-  const shimmer = useSharedValue(0);
+  const contentOpacity = useSharedValue(1);
 
   useEffect(() => {
     initializeApp();
   }, []);
 
-  useEffect(() => {
-    if (!initialized) {
-      heroOpacity.value = withSpring(0.3, { damping: 15 });
-      return;
-    }
-
-    // Staggered entrance animations
-    heroOpacity.value = withDelay(150, withSpring(1, { damping: 15, stiffness: 100 }));
-    heroTranslate.value = withDelay(150, withSpring(0, { damping: 15, stiffness: 100 }));
-    cardsOpacity.value = withDelay(300, withSpring(1, { damping: 15, stiffness: 100 }));
-    cardsTranslate.value = withDelay(300, withSpring(0, { damping: 15, stiffness: 100 }));
-    fabScale.value = withDelay(450, withSequence(
-      withSpring(0, { damping: 12 }),
-      withSpring(1, { damping: 12, stiffness: 200 })
-    ));
-    
-    // Shimmer effect
-    shimmer.value = withDelay(600, withTiming(1, { duration: 2000 }));
-  }, [initialized]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      shimmer.value = withSequence(
-        withTiming(1, { duration: 2000 }),
-        withTiming(0, { duration: 2000 })
-      );
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
+  // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
+  useFocusEffect(
+    React.useCallback(() => {
+      if (params?.openForm === 'true' || params?.openForm === true) {
+        // Małe opóźnienie aby upewnić się, że ekran jest w pełni załadowany
+        setTimeout(() => {
+          setEditingTask(null);
+          setShowForm(true);
+          // Wyczyść parametr z URL
+          router.setParams({ openForm: undefined });
+        }, 100);
+      }
+    }, [params?.openForm, router])
+  );
 
   const initializeApp = async () => {
     console.log('[App] Starting initialization...');
     try {
-      console.log('[App] Step 1: Initializing database...');
-      // Najpierw zainicjalizuj bazę danych
-      await initDatabase();
-      console.log('[App] Step 2: Database initialized, loading tasks...');
+      // Inicjalizuj metadane aplikacji (wykrywa pierwsze uruchomienie)
+      const { metadata, isFirstLaunch } = await initializeMetadata();
       
-      // Następnie wczytaj zadania (po inicjalizacji bazy)
+      if (isFirstLaunch) {
+        console.log('[App] First launch detected!');
+        // Wyświetl ekran powitalny przy pierwszym uruchomieniu
+        setShowOnboarding(true);
+      } else {
+        console.log('[App] Regular launch');
+        // Sprawdź czy onboarding został ukończony
+        if (!metadata.onboardingCompleted) {
+          setShowOnboarding(true);
+        } else {
+          // Załaduj imię użytkownika jeśli jest dostępne
+          if (metadata.preferences?.userName) {
+            setUserName(metadata.preferences.userName);
+          }
+        }
+      }
+      
+      // Załaduj zadania
       await loadTasks();
-      console.log('[App] Step 3: Tasks loaded');
-      
-      console.log('[App] Initialization complete, setting initialized to true');
-      setInitialized(true);
+      console.log('[App] Initialization complete.');
     } catch (error) {
       console.error('[App] Error initializing app:', error);
-      console.error('[App] Error stack:', error.stack);
-      console.warn('[App] Continuing despite error');
+    } finally {
       setInitialized(true);
+    }
+  };
+
+  const handleOnboardingComplete = async () => {
+    setShowOnboarding(false);
+    // Odśwież metadane aby załadować imię użytkownika
+    try {
+      const metadata = await getMetadata();
+      if (metadata.preferences?.userName) {
+        setUserName(metadata.preferences.userName);
+      }
+    } catch (error) {
+      console.error('[App] Error loading metadata after onboarding:', error);
     }
   };
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks();
+    await loadTasks(true); // Force refresh - bypass cache
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const handleAdd = () => {
-    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    fabRotation.value = withSequence(
-      withSpring(45, { damping: 12 }),
-      withSpring(0, { damping: 12 })
-    );
-    setEditingTask(null);
-    setShowForm(true);
-  };
-
   const handleFormSubmit = async (taskData) => {
-    if (editingTask) {
-      await useAppStore.getState().updateTask(editingTask.id, taskData);
-    } else {
-      await useAppStore.getState().addTask(taskData);
+    try {
+      console.log('[Index] handleFormSubmit called with:', taskData);
+      if (editingTask) {
+        console.log('[Index] Updating task:', editingTask.id);
+        await updateTaskInStore(editingTask.id, taskData);
+      } else {
+        console.log('[Index] Adding new task');
+        const taskId = await addTaskToStore(taskData);
+        console.log('[Index] Task added with ID:', taskId);
+      }
+      setEditingTask(null);
+      setShowForm(false);
+    } catch (error) {
+      console.error('[App] Error submitting task form:', error);
+      Alert.alert('Błąd',
+        error.message || 'Nie udało się zapisać zadania. Spróbuj ponownie.',
+        [{ text: 'OK' }]
+      );
+      throw error; // Re-throw to let TaskForm handle it
     }
-    await loadTasks();
-    setEditingTask(null);
   };
 
   const handleDelete = async (id) => {
-    Alert.alert(
-      'Usuń zadanie',
-      'Czy na pewno chcesz usunąć to zadanie?',
-      [
-        { text: 'Anuluj', style: 'cancel' },
-        {
-          text: 'Usuń',
-          style: 'destructive',
-          onPress: async () => {
-            // Skonfiguruj animację układu przed usunięciem - pozwoli na płynne przesunięcie pozostałych elementów
-            LayoutAnimation.configureNext({
-              duration: 250,
-              create: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-              update: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-              },
-              delete: {
-                type: LayoutAnimation.Types.easeInEaseOut,
-                property: LayoutAnimation.Properties.opacity,
-              },
-            });
-            
-            // Usuń zadanie - LayoutAnimation automatycznie animuje zmiany w układzie
-            await deleteTask(id);
-            await loadTasks(); // Odśwież zadania aby upewnić się, że lista jest aktualna
-            notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          },
+    try {
+      // Skonfiguruj animację układu przed usunięciem - pozwoli na płynne przesunięcie pozostałych elementów
+      LayoutAnimation.configureNext({
+        duration: 250,
+        create: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
         },
-      ]
-    );
+        update: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+        },
+        delete: {
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
+        },
+      });
+      
+      // Usuń zadanie - potwierdzenie jest już w TaskItem
+      await deleteTask(id);
+      notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (error) {
+      console.error('[App] Error deleting task:', error);
+      // Błąd już został obsłużony w TaskItem (przywrócenie widoku)
+      // Nie pokazujemy Alert - błąd jest już obsłużony wizualnie
+    }
   };
 
   const handleToggle = async (id) => {
-    await toggleTask(id);
+    try {
+      await toggleTask(id);
+    } catch (error) {
+      console.error('[App] Error toggling task:', error);
+      Alert.alert('Błąd', 'Nie udało się zaktualizować zadania. Spróbuj ponownie.', [{ text: 'OK' }]);
+    }
   };
 
   const handleEdit = (task) => {
@@ -240,40 +247,40 @@ export default function HomeScreen() {
     setShowForm(true);
   };
 
-  const activeTasks = useMemo(
-    () => tasks.filter(task => !task.completed).slice(0, 5),
-    [tasks]
-  );
+  const activeTasks = useMemo(() => {
+    console.log('[Index] Calculating activeTasks, total tasks:', tasks.length);
+    console.log('[Index] Tasks sample:', tasks.slice(0, 2).map(t => ({ id: t.id, title: t.title, completed: t.completed, completedType: typeof t.completed })));
+    const filtered = tasks.filter(task => {
+      const isNotCompleted = !task.completed;
+      console.log('[Index] Task', task.id, 'completed:', task.completed, 'type:', typeof task.completed, 'filtered:', isNotCompleted);
+      return isNotCompleted;
+    });
+    console.log('[Index] Active tasks after filter:', filtered.length);
+    const result = filtered.slice(0, 5);
+    console.log('[Index] Active tasks after slice:', result.length);
+    return result;
+  }, [tasks]);
+
+  const completedTasks = useMemo(() => {
+    const filtered = tasks.filter(task => task.completed);
+    return filtered.slice(0, 5);
+  }, [tasks]);
 
   const completedTasksCount = useMemo(
     () => tasks.filter(task => task.completed).length,
     [tasks]
   );
 
-  const heroAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: heroOpacity.value,
-    transform: [{ translateY: heroTranslate.value }],
-  }));
+  const displayedTasks = useMemo(() => {
+    return taskFilter === 'active' ? activeTasks : completedTasks;
+  }, [taskFilter, activeTasks, completedTasks]);
 
-  const cardsAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: cardsOpacity.value,
-    transform: [{ translateY: cardsTranslate.value }],
-  }));
-
-  const fabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: fabScale.value },
-      { rotate: `${fabRotation.value}deg` }
-    ],
-  }));
-
-  const shimmerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(shimmer.value, [0, 0.5, 1], [0.3, 0.7, 0.3]),
+  const contentAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
   }));
 
   const loadingAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: heroOpacity.value,
-    transform: [{ scale: withTiming(heroOpacity.value, { duration: 300 }) }],
+    opacity: contentOpacity.value,
   }));
 
   if (!initialized) {
@@ -290,10 +297,7 @@ export default function HomeScreen() {
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: 24,
-              shadowColor: colors.primary,
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.1,
-              shadowRadius: 12,
+              boxShadow: '0 4px 12px rgba(139, 111, 71, 0.1)',
               elevation: 8,
             }}>
               <Ionicons name="checkmark-circle" size={48} color={colors.primary} />
@@ -301,18 +305,18 @@ export default function HomeScreen() {
             <Text style={{
               color: colors.text,
               fontSize: 28,
-              fontWeight: 'bold',
+              fontWeight: getFontWeight('bold'),
               textAlign: 'center',
-              fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+              fontFamily: getFontFamily('bold', 'display'),
             }}>
-              Flineo Planer
+              Planer
             </Text>
             <Text style={{
               color: colors.textSecondary,
               fontSize: 17,
               marginTop: 12,
               textAlign: 'center',
-              fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+              fontFamily: getFontFamily('normal', 'text'),
             }}>
               Ładowanie zadań...
             </Text>
@@ -328,7 +332,7 @@ export default function HomeScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 145 + (insets.bottom || 0) }} // Space for FAB (56px) + position (69px) + extra padding (20px)
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }} // Space for glass menu (88px) + extra padding (32px)
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -338,7 +342,7 @@ export default function HomeScreen() {
           />
         }
       >
-        <Animated.View style={heroAnimatedStyle}>
+        <Animated.View style={contentAnimatedStyle}>
           <View style={{ paddingHorizontal: 20, paddingTop: 32, paddingBottom: 24 }}>
             <View style={{
               backgroundColor: colors.card,
@@ -346,28 +350,25 @@ export default function HomeScreen() {
               padding: 24,
               borderWidth: 1,
               borderColor: colors.border,
-              shadowColor: colors.primary,
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
+              boxShadow: '0 2px 8px rgba(139, 111, 71, 0.05)',
               elevation: 4,
             }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{
                     fontSize: 34,
-                    fontWeight: 'bold',
+                    fontWeight: getFontWeight('bold'),
                     color: colors.text,
                     marginBottom: 8,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                    fontFamily: getFontFamily('bold', 'display'),
                   }}>
-                    Flineo Planer
+                    {userName ? `Witaj, ${userName}!` : 'Planer'}
                   </Text>
                   <Text style={{
                     fontSize: 17,
                     color: colors.textSecondary,
                     lineHeight: 24,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                    fontFamily: getFontFamily('normal', 'text'),
                   }}>
                     Zarządzaj zadaniami i planuj swój dzień z łatwością
                   </Text>
@@ -380,26 +381,26 @@ export default function HomeScreen() {
                   value={tasks.length - completedTasksCount}
                   backgroundColor={colors.activeBg}
                   borderColor={colors.active}
+                  onPress={() => setTaskFilter('active')}
                 />
                 <StatCard
                   label="Zrealizowane"
                   value={completedTasksCount}
                   backgroundColor={colors.completedBg}
                   borderColor={colors.completed}
+                  onPress={() => setTaskFilter('completed')}
                 />
               </View>
             </View>
           </View>
-        </Animated.View>
 
-        <Animated.View style={cardsAnimatedStyle}>
           <View style={{ paddingHorizontal: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{
                 fontSize: 22,
-                fontWeight: 'bold',
+                fontWeight: getFontWeight('bold'),
                 color: colors.text,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                fontFamily: getFontFamily('bold', 'display'),
               }}>
                 Ostatnie zadania
               </Text>
@@ -410,10 +411,10 @@ export default function HomeScreen() {
               >
                 <Text style={{
                   fontSize: 17,
-                  fontWeight: '600',
+                  fontWeight: getFontWeight('600'),
                   color: colors.primary,
                   marginRight: 4,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                  fontFamily: getFontFamily('600', 'text'),
                 }}>
                   Zobacz wszystkie
                 </Text>
@@ -421,9 +422,9 @@ export default function HomeScreen() {
               </Pressable>
             </View>
 
-            {activeTasks.length > 0 ? (
+            {displayedTasks.length > 0 ? (
               <View>
-                {activeTasks.map((task, index) => (
+                {displayedTasks.map((task, index) => (
                   <TaskItem
                     key={task.id}
                     task={task}
@@ -446,17 +447,19 @@ export default function HomeScreen() {
                 borderStyle: 'dashed',
                 borderColor: colors.border,
               }}>
-                <Animated.View style={shimmerStyle}>
-                  <Ionicons name="checkmark-circle-outline" size={64} color={colors.textTertiary} />
-                </Animated.View>
+                <Ionicons 
+                  name={taskFilter === 'active' ? "checkmark-circle-outline" : "stats-chart-outline"} 
+                  size={64} 
+                  color={colors.textTertiary} 
+                />
                 <Text style={{
                   fontSize: 20,
-                  fontWeight: '600',
+                  fontWeight: getFontWeight('600'),
                   color: colors.text,
                   marginTop: 16,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                  fontFamily: getFontFamily('600', 'display'),
                 }}>
-                  Wszystko gotowe!
+                  {taskFilter === 'active' ? 'Wszystko gotowe!' : 'Brak zrealizowanych zadań'}
                 </Text>
                 <Text style={{
                   fontSize: 15,
@@ -464,9 +467,11 @@ export default function HomeScreen() {
                   textAlign: 'center',
                   marginTop: 8,
                   lineHeight: 22,
-                  fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                  fontFamily: getFontFamily('normal', 'text'),
                 }}>
-                  Dodaj pierwsze zadanie i zacznij tworzyć swoją idealną rutynę dnia.
+                  {taskFilter === 'active' 
+                    ? 'Dodaj pierwsze zadanie i zacznij tworzyć swoją idealną rutynę dnia.'
+                    : 'Zakończ zadanie, aby pojawiło się tutaj.'}
                 </Text>
               </View>
             )}
@@ -476,20 +481,17 @@ export default function HomeScreen() {
               backgroundColor: colors.card,
               borderRadius: 24,
               padding: 24,
-              shadowColor: colors.primary,
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
+              boxShadow: '0 2px 8px rgba(139, 111, 71, 0.05)',
               elevation: 4,
               borderWidth: 1,
               borderColor: colors.border,
             }}>
               <Text style={{
                 fontSize: 22,
-                fontWeight: 'bold',
+                fontWeight: getFontWeight('bold'),
                 color: colors.text,
                 marginBottom: 16,
-                fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                fontFamily: getFontFamily('bold', 'display'),
               }}>
                 Szybkie akcje
               </Text>
@@ -511,17 +513,17 @@ export default function HomeScreen() {
                   </View>
                   <Text style={{
                     fontSize: 17,
-                    fontWeight: '600',
+                    fontWeight: getFontWeight('600'),
                     color: colors.text,
                     marginBottom: 4,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                    fontFamily: getFontFamily('600', 'display'),
                   }}>
                     Zadania
                   </Text>
                   <Text style={{
                     fontSize: 13,
                     color: colors.textSecondary,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                    fontFamily: getFontFamily('normal', 'text'),
                   }}>
                     Przejdź do listy
                   </Text>
@@ -544,17 +546,17 @@ export default function HomeScreen() {
                   </View>
                   <Text style={{
                     fontSize: 17,
-                    fontWeight: '600',
+                    fontWeight: getFontWeight('600'),
                     color: colors.text,
                     marginBottom: 4,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'System',
+                    fontFamily: getFontFamily('600', 'display'),
                   }}>
                     Kalendarz
                   </Text>
                   <Text style={{
                     fontSize: 13,
                     color: colors.textSecondary,
-                    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'System',
+                    fontFamily: getFontFamily('normal', 'text'),
                   }}>
                     Zobacz harmonogram
                   </Text>
@@ -565,43 +567,6 @@ export default function HomeScreen() {
         </Animated.View>
       </ScrollView>
 
-      <Animated.View
-        style={[
-          fabAnimatedStyle,
-          {
-            position: 'absolute',
-            bottom: 69 + insets.bottom, // 20px padding + 49px tab bar height
-            right: 20,
-          },
-        ]}
-      >
-        <Pressable
-          onPress={handleAdd}
-          onPressIn={() => {
-            fabScale.value = withSpring(0.9, { damping: 15 });
-            impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }}
-          onPressOut={() => {
-            fabScale.value = withSpring(1, { damping: 15 });
-          }}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: colors.primary,
-            shadowColor: colors.primary,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 12,
-            elevation: 8,
-          }}
-        >
-          <Ionicons name="add" size={28} color="#FFFFFF" />
-        </Pressable>
-      </Animated.View>
-
       <TaskForm
         visible={showForm}
         onClose={() => {
@@ -611,6 +576,19 @@ export default function HomeScreen() {
         onSubmit={handleFormSubmit}
         initialTask={editingTask}
       />
+
+      <OnboardingScreen
+        visible={showOnboarding}
+        onComplete={handleOnboardingComplete}
+      />
     </View>
   );
 }
+
+
+
+
+
+
+
+
