@@ -2,49 +2,51 @@ import { Platform } from 'react-native';
 import { useMemo, useRef, useCallback, useState, useEffect } from 'react';
 import { View, Pressable, ScrollView } from 'react-native';
 
-// Cache dla wykrywania platformy - tylko raz sprawdzamy
-// Użyj wielu metod wykrywania, aby upewnić się, że wykryjemy web poprawnie
-const isWeb = 
-  (typeof Platform !== 'undefined' && Platform.OS === 'web') ||
-  (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') ||
-  (typeof document !== 'undefined') ||
-  (typeof navigator !== 'undefined' && navigator.product === 'ReactNative' === false);
+const isWeb = Platform.OS === 'web';
 
-let Reanimated;
+// Na webie Metro automatycznie użyje mocka z metro.config.js
+// Na mobile wymagamy prawdziwego react-native-reanimated
+let Reanimated = null;
+if (!isWeb) {
+  try {
+    Reanimated = require('react-native-reanimated');
+  } catch (e) {
+    console.warn('[animationHelpers] react-native-reanimated not available');
+  }
+}
+
 let useSharedValue;
 let useAnimatedStyle;
 let withSpring;
 let withTiming;
 let withSequence;
+let withRepeat;
 let Easing;
 let createAnimatedComponent;
 let AnimatedView;
 let AnimatedScrollView;
 let useAnimatedScrollHandler;
+let useAnimatedReaction;
 let runOnJS;
 
-// Ładowanie reanimated tylko jeśli nie jesteśmy na webie (optymalizacja)
-if (!isWeb) {
-  try {
-    Reanimated = require('react-native-reanimated');
+  // Na webie zawsze używamy fallbacków, na mobile używamy Reanimated jeśli dostępne
+  if (!isWeb && Reanimated) {
+    // Native implementations
     useSharedValue = Reanimated.useSharedValue;
     useAnimatedStyle = Reanimated.useAnimatedStyle;
     withSpring = Reanimated.withSpring;
     withTiming = Reanimated.withTiming;
     withSequence = Reanimated.withSequence;
+    withRepeat = Reanimated.withRepeat;
     Easing = Reanimated.Easing;
     createAnimatedComponent = Reanimated.default?.createAnimatedComponent || Reanimated.createAnimatedComponent;
     AnimatedView = Reanimated.default?.View || Reanimated.View || View;
     AnimatedScrollView = Reanimated.default?.ScrollView || Reanimated.ScrollView || ScrollView;
     useAnimatedScrollHandler = Reanimated.useAnimatedScrollHandler;
+    useAnimatedReaction = Reanimated.useAnimatedReaction;
     runOnJS = Reanimated.runOnJS;
-  } catch (error) {
-    console.error('[Animation] Failed to load reanimated:', error);
-  }
-}
-
-// Optymalizowane implementacje dla webu - minimalizują re-rendery
-if (isWeb || !Reanimated) {
+} else {
+  // Web fallback implementations
   // useSharedValue dla web - używa useRef (bez re-renderów!)
   useSharedValue = (initialValue) => {
     const ref = useRef({ value: initialValue });
@@ -64,12 +66,7 @@ if (isWeb || !Reanimated) {
   // Na webie shared values nie powodują re-renderów, więc style są statyczne
   useAnimatedStyle = (styleFn) => {
     const style = useMemo(() => {
-      try {
-        return styleFn() || {};
-      } catch (error) {
-        console.warn('[Animation] Error in animated style:', error);
-        return {};
-      }
+      return styleFn() || {};
     }, []); // Pusta tablica - oblicz tylko raz przy mount
 
     return style;
@@ -109,22 +106,37 @@ if (isWeb || !Reanimated) {
     return lastAnimation;
   }, []);
 
+  // withRepeat dla web - zwraca wartość bez powtórzeń (natychmiast)
+  withRepeat = useCallback((animation, numberOfReps = -1, reverse = false) => {
+    // Na webie zwracamy po prostu animację bez powtórzeń
+    return animation;
+  }, []);
+
   // Easing dla web - prosty obiekt (singleton)
+  // Musi pasować do struktury Reanimated.Easing dla kompatybilności
+  // W Reanimated, easing functions są funkcjami (t) => number, nie funkcjami które zwracają funkcje
+  const easeFn = (t) => {
+    // Standard cubic-bezier ease function
+    return t === 0 ? 0 : t === 1 ? 1 : t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+  };
+  const linearFn = (t) => t;
+  const quadFn = (t) => t * t;
+  
   Easing = {
-    linear: () => (t) => t,
-    ease: () => (t) => t,
-    quad: () => (t) => t * t,
-    cubic: () => (t) => t * t * t,
-    poly: () => (t) => t * t * t * t,
-    sin: () => (t) => 1 - Math.cos((t * Math.PI) / 2),
-    circle: () => (t) => 1 - Math.sqrt(1 - t * t),
-    exp: () => (t) => t === 0 ? 0 : Math.pow(2, 10 * (t - 1)),
-    elastic: () => (t) => t === 0 ? 0 : t === 1 ? 1 : -Math.pow(2, 10 * (t - 1)) * Math.sin((t - 1.1) * 5 * Math.PI),
-    back: () => (t) => {
+    linear: linearFn,
+    ease: easeFn,
+    quad: quadFn,
+    cubic: (t) => t * t * t,
+    poly: (t) => t * t * t * t,
+    sin: (t) => 1 - Math.cos((t * Math.PI) / 2),
+    circle: (t) => 1 - Math.sqrt(1 - t * t),
+    exp: (t) => t === 0 ? 0 : Math.pow(2, 10 * (t - 1)),
+    elastic: (t) => t === 0 ? 0 : t === 1 ? 1 : -Math.pow(2, 10 * (t - 1)) * Math.sin((t - 1.1) * 5 * Math.PI),
+    back: (t) => {
       const s = 1.70158;
       return t * t * ((s + 1) * t - s);
     },
-    bounce: () => (t) => {
+    bounce: (t) => {
       if (t < 1 / 2.75) {
         return 7.5625 * t * t;
       } else if (t < 2 / 2.75) {
@@ -135,9 +147,27 @@ if (isWeb || !Reanimated) {
         return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375;
       }
     },
-    in: (fn) => fn,
-    out: (fn) => fn,
-    inOut: (fn) => fn,
+    in: (fn) => {
+      // Easing.in takes an easing function and returns it wrapped
+      if (typeof fn === 'function') {
+        return (t) => fn(t);
+      }
+      return fn;
+    },
+    out: (fn) => {
+      // Easing.out takes an easing function and returns the reversed version
+      if (typeof fn === 'function') {
+        return (t) => 1 - fn(1 - t);
+      }
+      return (t) => 1 - fn(1 - t);
+    },
+    inOut: (fn) => {
+      // Easing.inOut combines in and out
+      if (typeof fn === 'function') {
+        return (t) => t < 0.5 ? fn(2 * t) / 2 : 1 - fn(2 - 2 * t) / 2;
+      }
+      return (t) => t < 0.5 ? fn(2 * t) / 2 : 1 - fn(2 - 2 * t) / 2;
+    },
   };
 
   // createAnimatedComponent dla web - zwraca normalny komponent (zero overhead)
@@ -158,15 +188,34 @@ if (isWeb || !Reanimated) {
       // Po prostu zwracamy funkcję, która nic nie robi
       // Ale możemy zapisać wartość do shared value jeśli potrzeba
       if (handlers?.onScroll && event?.nativeEvent?.contentOffset) {
-        // Zapisz offset do shared value jeśli jest dostępny
-        try {
-          handlers.onScroll({ contentOffset: event.nativeEvent.contentOffset });
-        } catch (e) {
-          // Ignore errors on web
-        }
+        handlers.onScroll({ contentOffset: event.nativeEvent.contentOffset });
       }
     };
   }, []);
+
+  // useAnimatedReaction dla web - symulacja reakcji na zmiany
+  useAnimatedReaction = (getValue, onValueChange) => {
+    const prevValueRef = useRef(null);
+    
+    useEffect(() => {
+      const checkValue = () => {
+        try {
+          const currentValue = typeof getValue === 'function' ? getValue() : getValue?.value;
+          if (currentValue !== prevValueRef.current) {
+            prevValueRef.current = currentValue;
+            if (typeof onValueChange === 'function') {
+              onValueChange(currentValue);
+            }
+          }
+        } catch (e) {
+          // Ignoruj błędy
+        }
+      };
+      
+      const interval = setInterval(checkValue, 16); // ~60fps
+      return () => clearInterval(interval);
+    }, [getValue, onValueChange]);
+  };
 
   // runOnJS dla web - zwraca funkcję bez zmian (no-op)
   runOnJS = useCallback((fn) => {
@@ -188,11 +237,13 @@ export {
   withSpring, 
   withTiming, 
   withSequence,
+  withRepeat,
   Easing,
   createAnimatedComponent,
   AnimatedView,
   AnimatedScrollView,
   useAnimatedScrollHandler,
+  useAnimatedReaction,
   runOnJS,
   Animated,
 };

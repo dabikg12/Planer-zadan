@@ -17,7 +17,6 @@ Aplikacja mobilna do planowania zadań z integracją kalendarza, zbudowana z Exp
 - **Expo Router** - Routing oparty na systemie plików
 - **NativeWind** - Tailwind CSS dla React Native
 - **Zustand** - Zarządzanie stanem aplikacji
-- **React Query** - Zarządzanie cache'em i synchronizacją danych
 - **SQLite (expo-sqlite)** - Lokalna baza danych
 - **expo-calendar** - Integracja z kalendarzem systemowym
 - **react-native-calendars** - Komponent kalendarza
@@ -45,7 +44,7 @@ Następnie:
 ```
 flineo-planer/
 ├── app/
-│   ├── _layout.js          # Główny layout z React Query
+│   ├── _layout.js          # Główny layout aplikacji
 │   ├── index.js            # Strona główna (Dashboard)
 │   ├── tasks.js            # Ekran listy zadań
 │   ├── calendar.js         # Ekran kalendarza

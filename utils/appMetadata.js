@@ -10,10 +10,18 @@ const defaultMetadata = {
   appVersion: '1.0.0',
   onboardingCompleted: false,
   preferences: {
-    userName: null,
     theme: 'light',
     notifications: true,
     language: 'pl',
+    userData: {
+      firstName: '',
+      lastName: '',
+      age: null,
+    },
+    schedule: {
+      wakeTime: '08:00',
+      bedTime: '22:00',
+    },
   },
 };
 
@@ -58,37 +66,55 @@ const saveMetadataToStorage = (metadata) => {
 
 // Helpery dla SQLite (mobile)
 let metadataDb = null;
+let metadataDbInitPromise = null;
 const METADATA_TABLE = 'app_metadata';
+let saveQueue = Promise.resolve(); // Kolejka sekwencyjnych zapisów
 
 const initMetadataDb = async () => {
   if (isWeb) return null;
   
-  try {
-    const SQLiteModule = await import('expo-sqlite');
-    const db = await SQLiteModule.openDatabaseAsync('flineo-planer-metadata.db');
-    
-    await db.execAsync(`
-      CREATE TABLE IF NOT EXISTS ${METADATA_TABLE} (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      );
-    `);
-    
-    metadataDb = db;
-    console.log('[Metadata] Database initialized successfully');
-    return db;
-  } catch (error) {
-    console.error('[Metadata] Failed to initialize metadata database:', error);
-    return null;
+  if (metadataDbInitPromise) {
+    return metadataDbInitPromise;
   }
+  
+  if (metadataDb) {
+    return metadataDb;
+  }
+  
+  metadataDbInitPromise = (async () => {
+    try {
+      const SQLiteModule = await import('expo-sqlite');
+      const db = await SQLiteModule.openDatabaseAsync('flineo-planer-metadata.db');
+      
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS ${METADATA_TABLE} (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+      `);
+      
+      metadataDb = db;
+      console.log('[Metadata] Database initialized successfully');
+      return db;
+    } catch (error) {
+      console.error('[Metadata] Failed to initialize metadata database:', error);
+      metadataDbInitPromise = null;
+      return null;
+    }
+  })();
+  
+  return metadataDbInitPromise;
 };
 
 const getMetadataFromDb = async (key) => {
-  if (isWeb || !metadataDb) return null;
+  if (isWeb) return null;
+  
+  const db = await initMetadataDb();
+  if (!db) return null;
   
   try {
-    const result = await metadataDb.getFirstAsync(
+    const result = await db.getFirstAsync(
       `SELECT value FROM ${METADATA_TABLE} WHERE key = ?`,
       [key]
     );
@@ -100,22 +126,37 @@ const getMetadataFromDb = async (key) => {
 };
 
 const saveMetadataToDb = async (key, metadata) => {
-  if (isWeb || !metadataDb) return;
+  if (isWeb) return;
   
-  try {
+  // Dodaj do kolejki sekwencyjnych zapisów - zapewnia że zapisy są wykonywane po kolei
+  saveQueue = saveQueue.catch(() => {
+    // Ignoruj błędy z poprzednich operacji, aby kolejka mogła kontynuować
+    return Promise.resolve();
+  }).then(async () => {
+    const db = await initMetadataDb();
+    if (!db) return;
+    
     const now = new Date().toISOString();
-    await metadataDb.runAsync(
+    const valueStr = JSON.stringify(metadata);
+    
+    // Prosta operacja INSERT OR REPLACE - kolejka zapewnia sekwencyjność
+    await db.runAsync(
       `INSERT OR REPLACE INTO ${METADATA_TABLE} (key, value, updatedAt) VALUES (?, ?, ?)`,
-      [key, JSON.stringify(metadata), now]
+      [key, valueStr, now]
     );
-  } catch (error) {
-    console.error('[Metadata] Error saving to database:', error);
-  }
+  });
+  
+  // Czekaj na zakończenie operacji w kolejce
+  await saveQueue.catch((error) => {
+    // Loguj tylko nieoczekiwane błędy (nie "database is locked")
+    if (error && error.message && !error.message.includes('database is locked')) {
+      console.error('[Metadata] Error saving to database:', error);
+    }
+  });
 };
 
 // Główna funkcja do inicjalizacji metadanych
 export const initializeMetadata = async () => {
-  // Inicjalizuj bazę danych dla mobile
   if (!isWeb) {
     await initMetadataDb();
   }
@@ -125,10 +166,10 @@ export const initializeMetadata = async () => {
     : await getMetadataFromDb('metadata');
   
   const now = new Date().toISOString();
-  const appVersion = '1.0.0'; // Z app.json - można w przyszłości dynamicznie
+  const appVersion = '1.0.0';
   
   if (!existing) {
-    // Pierwsze uruchomienie
+    // Pierwsze uruchomienie - zapisz metadane
     const newMetadata = {
       ...defaultMetadata,
       lastLaunchDate: now,
@@ -144,24 +185,9 @@ export const initializeMetadata = async () => {
     console.log('[Metadata] First launch detected, metadata initialized');
     return { metadata: newMetadata, isFirstLaunch: true };
   } else {
-    // Kolejne uruchomienie - aktualizuj tylko lastLaunchDate
-    const updatedMetadata = {
-      ...existing,
-      lastLaunchDate: now,
-      // Zachowaj istniejące preferencje
-      preferences: {
-        ...defaultMetadata.preferences,
-        ...(existing.preferences || {}),
-      },
-    };
-    
-    if (isWeb) {
-      saveMetadataToStorage(updatedMetadata);
-    } else {
-      await saveMetadataToDb('metadata', updatedMetadata);
-    }
-    
-    return { metadata: updatedMetadata, isFirstLaunch: false };
+    // Kolejne uruchomienie - NIE zapisuj automatycznie, tylko zwróć istniejące
+    // lastLaunchDate będzie aktualizowane tylko gdy użytkownik wykona jakąś akcję
+    return { metadata: existing, isFirstLaunch: false };
   }
 };
 
@@ -170,7 +196,7 @@ export const getMetadata = async () => {
   if (isWeb) {
     return getMetadataFromStorage() || defaultMetadata;
   } else {
-    if (!metadataDb) await initMetadataDb();
+    await initMetadataDb(); // Upewnij się, że baza jest zainicjalizowana
     const metadata = await getMetadataFromDb('metadata');
     return metadata || defaultMetadata;
   }
@@ -190,25 +216,25 @@ export const updatePreferences = async (preferences) => {
   if (isWeb) {
     saveMetadataToStorage(updated);
   } else {
-    if (!metadataDb) await initMetadataDb();
+    await initMetadataDb(); // Upewnij się, że baza jest zainicjalizowana
     await saveMetadataToDb('metadata', updated);
   }
   
   return updated;
 };
 
-// Zaktualizuj status onboarding
-export const setOnboardingCompleted = async (completed = true) => {
+// Zaktualizuj pełne metadane
+export const updateMetadata = async (metadataUpdates) => {
   const current = await getMetadata();
   const updated = {
     ...current,
-    onboardingCompleted: completed,
+    ...metadataUpdates,
   };
   
   if (isWeb) {
     saveMetadataToStorage(updated);
   } else {
-    if (!metadataDb) await initMetadataDb();
+    await initMetadataDb();
     await saveMetadataToDb('metadata', updated);
   }
   

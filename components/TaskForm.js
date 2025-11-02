@@ -1,7 +1,8 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Modal,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   View,
   Text,
@@ -20,46 +21,23 @@ import {
   runOnJS,
   Easing,
   Animated,
-} from '../../utils/animationHelpers';
-import { impactAsync, notificationAsync } from '../../utils/haptics';
+} from '../utils/animationHelpers';
+import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
-import { getFontFamily, getFontWeight } from '../../utils/fontHelpers';
+import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
+import { colors, priorities } from '../utils/colors';
+import { inputStyles, HIT_SLOP, HIT_SLOP_LARGE } from '../utils/inputStyles';
 
-// Warunkowy import gestur handler tylko dla mobilnych
+// Import gestur handler dla mobilnych
 const isWeb = Platform.OS === 'web';
 let Gesture = null;
 let GestureDetector = null;
 
 if (!isWeb) {
-  try {
-    const gestureModule = require('react-native-gesture-handler');
-    Gesture = gestureModule.Gesture;
-    GestureDetector = gestureModule.GestureDetector;
-  } catch (error) {
-    console.warn('[TaskForm] Gesture handler not available:', error);
-  }
+  const gestureModule = require('react-native-gesture-handler');
+  Gesture = gestureModule.Gesture;
+  GestureDetector = gestureModule.GestureDetector;
 }
-
-// Color palette - brown/beige theme
-const colors = {
-  background: '#F5F1E8',
-  card: '#FEFCFB',
-  primary: '#8B6F47',
-  primaryLight: '#A0826D',
-  accent: '#C4A484',
-  text: '#2A1F15',
-  textSecondary: '#6B5238',
-  textTertiary: '#A0826D',
-  border: '#E8DDD1',
-  activeBg: '#F0E6D2',
-  completedBg: '#E8DDD1',
-};
-
-const priorities = [
-  { value: 'low', label: 'Niski', color: '#388E3C', bgColor: '#E8F5E9', borderColor: '#66BB6A' },
-  { value: 'medium', label: 'Średni', color: '#F57C00', bgColor: '#FFF3E0', borderColor: '#FF9800' },
-  { value: 'high', label: 'Wysoki', color: '#D32F2F', bgColor: '#FFEBEE', borderColor: '#EF5350' },
-];
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -81,14 +59,13 @@ const PriorityButton = ({ item, isActive, onPress }) => {
       }}
     >
       <View
-        style={{
-          borderRadius: 16,
-          borderWidth: 1,
-          paddingHorizontal: 16,
-          paddingVertical: 14,
-          backgroundColor: isActive ? item.bgColor : colors.card,
-          borderColor: isActive ? (item.borderColor || item.color) : colors.border,
-        }}
+        style={[
+          inputStyles.priorityButton,
+          {
+            backgroundColor: isActive ? item.bgColor : colors.card,
+            borderColor: isActive ? (item.borderColor || item.color) : colors.border,
+          }
+        ]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text
@@ -110,11 +87,20 @@ const PriorityButton = ({ item, isActive, onPress }) => {
   );
 };
 
+// Import DateTimePicker
+let DateTimePicker = null;
+if (Platform.OS !== 'web') {
+  DateTimePicker = require('@react-native-community/datetimepicker').default;
+}
+
 export default function TaskForm({ visible, onClose, onSubmit, initialTask = null, initialDate = null }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
   const [dueDate, setDueDate] = useState(null);
+  const [time, setTime] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const timeInputRef = useRef(null);
   const screenHeight = Dimensions.get('window').height;
   const modalHeight = screenHeight * 0.85;
   const DRAG_THRESHOLD = 100; // px to drag before closing
@@ -142,15 +128,12 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
       setTitle(initialTask.title || '');
       setDescription(initialTask.description || '');
       setPriority(initialTask.priority || 'medium');
+      setTime(initialTask.time || '');
       if (initialTask.dueDate) {
-        try {
-          const date = new Date(initialTask.dueDate);
-          if (!isNaN(date.getTime())) {
-            setDueDate(date);
-          } else {
-            setDueDate(null);
-          }
-        } catch {
+        const date = new Date(initialTask.dueDate);
+        if (!isNaN(date.getTime())) {
+          setDueDate(date);
+        } else {
           setDueDate(null);
         }
       } else {
@@ -160,17 +143,13 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
       resetForm();
       // Set initial date when form opens and no task is being edited
       if (visible && initialDate) {
-        try {
-          // Parse date string (YYYY-MM-DD) as local date, not UTC
-          const [year, month, day] = initialDate.split('-').map(Number);
-          if (year && month && day) {
-            const date = new Date(year, month - 1, day);
-            if (!isNaN(date.getTime())) {
-              setDueDate(date);
-            }
+        // Parse date string (YYYY-MM-DD) as local date, not UTC
+        const [year, month, day] = initialDate.split('-').map(Number);
+        if (year && month && day) {
+          const date = new Date(year, month - 1, day);
+          if (!isNaN(date.getTime())) {
+            setDueDate(date);
           }
-        } catch {
-          // Ignore invalid dates
         }
       }
     }
@@ -181,6 +160,7 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
     setDescription('');
     setPriority('medium');
     setDueDate(null);
+    setTime('');
   }, []);
 
   // Convert Date to YYYY-MM-DD format using local timezone
@@ -201,30 +181,39 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
       return;
     }
 
-    try {
-      console.log('[TaskForm] Submitting task with data:', {
-        title: title.trim(),
-        description: description.trim(),
-        priority,
-        dueDate: formatDateLocal(dueDate),
-      });
-      
-      await onSubmit({
-        title: title.trim(),
-        description: description.trim(),
-        priority,
-        dueDate: formatDateLocal(dueDate),
-      });
-
-      console.log('[TaskForm] Task submitted successfully');
-      notificationAsync(Haptics.NotificationFeedbackType.Success);
-      resetForm();
-      onClose();
-    } catch (error) {
-      console.error('[TaskForm] Error submitting task:', error);
-      notificationAsync(Haptics.NotificationFeedbackType.Error);
-      // Don't close form on error, let user try again
+    // Validate time format if provided
+    let normalizedTime = time.trim();
+    if (normalizedTime) {
+      // Validate HH:MM format
+      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(normalizedTime)) {
+        notificationAsync(Haptics.NotificationFeedbackType.Error);
+        return;
+      }
+    } else {
+      normalizedTime = null;
     }
+
+    console.log('[TaskForm] Submitting task with data:', {
+      title: title.trim(),
+      description: description.trim(),
+      priority,
+      dueDate: formatDateLocal(dueDate),
+      time: normalizedTime,
+    });
+    
+    await onSubmit({
+      title: title.trim(),
+      description: description.trim(),
+      priority,
+      dueDate: formatDateLocal(dueDate),
+      time: normalizedTime,
+    });
+
+    console.log('[TaskForm] Task submitted successfully');
+    notificationAsync(Haptics.NotificationFeedbackType.Success);
+    resetForm();
+    onClose();
   };
 
   const handleFormClose = useCallback(() => {
@@ -283,7 +272,7 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
         // Close modal if dragged past threshold
         translateY.value = withTiming(modalHeight, {
           duration: 250,
-          easing: Easing.in(Easing.ease),
+          easing: Easing.in(Easing.quad),
         });
         opacity.value = withTiming(0, { duration: 200 });
         runOnJS(handleClose)();
@@ -291,7 +280,7 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
         // Snap back to original position only if at top
         translateY.value = withTiming(0, {
           duration: 250,
-          easing: Easing.out(Easing.ease),
+          easing: Easing.out(Easing.quad),
         });
       }
     }) : null;
@@ -326,14 +315,15 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
       statusBarTranslucent
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1, justifyContent: 'flex-end' }}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        enabled={Platform.OS === 'ios'}
       >
         <Animated.View
           style={[
             backdropStyle,
-            { position: 'absolute', inset: 0, backgroundColor: '#000000', zIndex: 1 }
+            { position: 'absolute', inset: 0, backgroundColor: colors.black, zIndex: 1 }
           ]}
           pointerEvents={visible ? "auto" : "none"}
         >
@@ -419,15 +409,8 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
             </View>
             <Pressable
               onPress={handleFormClose}
-              style={{
-                width: 36,
-                height: 36,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 18,
-                backgroundColor: colors.completedBg,
-              }}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={inputStyles.closeButton}
+              hitSlop={HIT_SLOP_LARGE}
             >
               <Ionicons name="close" size={20} color={colors.textTertiary} />
             </Pressable>
@@ -461,25 +444,13 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               }}>
                 Tytuł *
               </Text>
-              <View style={{
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.completedBg,
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-              }}>
+              <View style={inputStyles.container}>
                 <TextInput
                   placeholder="Wpisz tytuł zadania"
                   value={title}
                   onChangeText={setTitle}
-                  style={{
-                    fontSize: 17,
-                    color: colors.text,
-                    fontFamily: getFontFamily('normal', 'text'),
-                  }}
+                  style={inputStyles.input}
                   placeholderTextColor={colors.textTertiary}
-                  autoFocus
                   textContentType="none"
                   autoCapitalize="sentences"
                   autoCorrect={true}
@@ -499,26 +470,14 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               }}>
                 Opis
               </Text>
-              <View style={{
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.completedBg,
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-              }}>
+              <View style={inputStyles.container}>
                 <TextInput
                   placeholder="Dodaj dodatkowe informacje"
                   value={description}
                   onChangeText={setDescription}
                   multiline
                   textAlignVertical="top"
-                  style={{
-                    fontSize: 17,
-                    color: colors.text,
-                    minHeight: 100,
-                    fontFamily: getFontFamily('normal', 'text'),
-                  }}
+                  style={[inputStyles.input, { minHeight: 100 }]}
                   placeholderTextColor={colors.textTertiary}
                   autoCapitalize="sentences"
                   autoCorrect={true}
@@ -550,7 +509,7 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               </View>
             </View>
 
-            <View style={{ marginBottom: 24 }}>
+            <View style={{ marginBottom: 20 }}>
               <Text style={{
                 fontSize: 14,
                 fontWeight: getFontWeight('600'),
@@ -562,20 +521,16 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               }}>
                 Data
               </Text>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.completedBg,
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-                gap: 8,
-              }}>
+              <View style={inputStyles.container}>
                 <TextInput
                   placeholder="YYYY-MM-DD (np. 2025-01-31)"
                   value={dueDate ? formatDateLocal(dueDate) : ''}
+                  onFocus={() => {
+                    if (Platform.OS !== 'web') {
+                      setShowDatePicker(true);
+                      impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                  }}
                   onChangeText={(text) => {
                     if (text === '') {
                       setDueDate(null);
@@ -590,18 +545,16 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
                       }
                     }
                   }}
-                  style={{
-                    flex: 1,
-                    fontSize: 17,
-                    color: colors.text,
-                    fontFamily: getFontFamily('normal', 'text'),
-                  }}
+                  style={inputStyles.input}
                   placeholderTextColor={colors.textTertiary}
                   keyboardType="numeric"
+                  editable={true}
+                  showSoftInputOnFocus={Platform.OS !== 'web' ? false : true}
                 />
-                {dueDate && (
+                {dueDate ? (
                   <Pressable
-                    onPress={() => {
+                    onPress={(e) => {
+                      e.stopPropagation();
                       setDueDate(null);
                       impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
@@ -610,19 +563,101 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    hitSlop={HIT_SLOP_LARGE}
                   >
                     <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
                   </Pressable>
+                ) : (
+                  <Ionicons name="calendar-outline" size={22} color={colors.primary} />
                 )}
               </View>
+                <Text style={{
+                  fontSize: 14,
+                  color: colors.textTertiary,
+                  marginTop: 8,
+                  fontFamily: getFontFamily('normal', 'text'),
+                }}>
+                  Format: RRRR-MM-DD
+                </Text>
+            </View>
+
+            <View style={{ marginBottom: 24 }}>
+              <Text style={{
+                fontSize: 14,
+                fontWeight: getFontWeight('600'),
+                color: colors.textSecondary,
+                textTransform: 'uppercase',
+                letterSpacing: 1,
+                marginBottom: 8,
+                fontFamily: getFontFamily('600', 'text'),
+              }}>
+                Godzina
+              </Text>
+              <Pressable
+                style={inputStyles.container}
+                onPress={() => {
+                  if (timeInputRef.current) {
+                    timeInputRef.current.focus();
+                  }
+                }}
+              >
+                <TextInput
+                  ref={timeInputRef}
+                  placeholder="HH:MM (np. 14:30)"
+                  value={time}
+                  onChangeText={(text) => {
+                    // Allow only digits and colon, max 5 characters
+                    let formatted = text.replace(/[^\d:]/g, '');
+                    // Auto-format: add colon after 2 digits
+                    if (formatted.length === 2 && !formatted.includes(':')) {
+                      formatted = formatted + ':';
+                    }
+                    // Limit to HH:MM format (24h format)
+                    if (formatted.length > 5) {
+                      formatted = formatted.substring(0, 5);
+                    }
+                    setTime(formatted);
+                    // Validate on change
+                    if (formatted.length === 5) {
+                      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+                      if (timeRegex.test(formatted)) {
+                        impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }
+                  }}
+                  style={inputStyles.input}
+                  placeholderTextColor={colors.textTertiary}
+                  keyboardType="numeric"
+                  maxLength={5}
+                  editable={true}
+                />
+                {time ? (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      setTime('');
+                      impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={{
+                      padding: 4,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    hitSlop={HIT_SLOP_LARGE}
+                  >
+                    <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                  </Pressable>
+                ) : (
+                  <Ionicons name="time-outline" size={22} color={colors.primary} />
+                )}
+              </Pressable>
               <Text style={{
                 fontSize: 14,
                 color: colors.textTertiary,
                 marginTop: 8,
                 fontFamily: getFontFamily('normal', 'text'),
               }}>
-                Format: RRRR-MM-DD
+                Format: GG:MM (opcjonalne)
               </Text>
             </View>
           </Animated.ScrollView>
@@ -636,28 +671,15 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               console.log('[TaskForm] Button press in');
               impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             }}
-            style={{
-              marginTop: 16,
-              borderRadius: 16,
-              paddingVertical: 16,
-              paddingHorizontal: 24,
-              backgroundColor: colors.primary,
-              boxShadow: '0 4px 8px rgba(139, 111, 71, 0.3)',
-              elevation: 4,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              minHeight: 56,
-            }}
+            style={[inputStyles.buttonPrimary, { marginTop: 16, cursor: Platform.OS === 'web' ? 'pointer' : 'default' }]}
             accessibilityRole="button"
             accessibilityLabel={initialTask ? 'Zapisz zmiany' : 'Dodaj zadanie'}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            hitSlop={HIT_SLOP_LARGE}
             disabled={false}
           >
-            <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" style={{ pointerEvents: 'none' }} />
+            <Ionicons name="checkmark-circle" size={20} color={colors.white} style={{ pointerEvents: 'none' }} />
             <Text style={{
-              color: '#FFFFFF',
+              color: colors.white,
               fontSize: 17,
               fontWeight: getFontWeight('600'),
               marginLeft: 8,
@@ -668,6 +690,111 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
             </Text>
           </Pressable>
           </Animated.View>
+        )}
+
+        {/* Date Picker dla Android */}
+        {showDatePicker && Platform.OS === 'android' && DateTimePicker && (
+          <DateTimePicker
+            value={dueDate || new Date()}
+            mode="date"
+            display="default"
+            onChange={(event, date) => {
+              setShowDatePicker(false);
+              if (event.type === 'set' && date) {
+                setDueDate(date);
+                impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }
+            }}
+            minimumDate={initialTask ? null : new Date()}
+            locale="pl_PL"
+            textColor={colors.text}
+            accentColor={colors.primary}
+          />
+        )}
+
+        {/* Date Picker dla iOS w modalu */}
+        {Platform.OS === 'ios' && showDatePicker && DateTimePicker && (
+          <Pressable
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: colors.overlay,
+              justifyContent: 'flex-end',
+            }}
+            onPress={() => setShowDatePicker(false)}
+          >
+            <View
+              style={{
+                backgroundColor: colors.card,
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                paddingBottom: 40,
+              }}
+              onStartShouldSetResponder={() => true}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingHorizontal: 20,
+                  paddingTop: 16,
+                  paddingBottom: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.border,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.text,
+                    fontFamily: getFontFamily('600', 'text'),
+                  }}
+                >
+                  Wybierz datę
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setShowDatePicker(false);
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={{
+                    paddingVertical: 4,
+                    paddingHorizontal: 8,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: getFontWeight('600'),
+                      color: colors.primary,
+                      fontFamily: getFontFamily('600', 'text'),
+                    }}
+                  >
+                    Gotowe
+                  </Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                value={dueDate || new Date()}
+                mode="date"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) {
+                    setDueDate(date);
+                  }
+                }}
+                minimumDate={initialTask ? null : new Date()}
+                locale="pl_PL"
+                textColor={colors.text}
+                accentColor={colors.primary}
+              />
+            </View>
+          </Pressable>
         )}
       </KeyboardAvoidingView>
     </Modal>

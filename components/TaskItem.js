@@ -8,49 +8,11 @@ import {
   withSpring,
   withTiming,
   withSequence,
-} from '../../utils/animationHelpers';
-import { impactAsync, notificationAsync } from '../../utils/haptics';
+} from '../utils/animationHelpers';
+import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
-import { getFontFamily, getFontWeight } from '../../utils/fontHelpers';
-
-// Color palette - brown/beige theme
-const colors = {
-  primary: '#8B6F47',
-  primaryLight: '#A0826D',
-  accent: '#C4A484',
-  text: '#2A1F15',
-  textSecondary: '#6B5238',
-  textTertiary: '#A0826D',
-  border: '#E8DDD1',
-  card: '#FEFCFB',
-  background: '#F5F1E8',
-  completed: '#A0826D',
-  completedBg: '#E8DDD1',
-};
-
-const priorityConfig = {
-  high: {
-    label: 'Wysoki',
-    color: '#D32F2F',
-    bgColor: '#FFEBEE',
-    borderColor: '#EF5350',
-  },
-  medium: {
-    label: 'Średni',
-    color: '#F57C00',
-    bgColor: '#FFF3E0',
-    borderColor: '#FF9800',
-  },
-  low: {
-    label: 'Niski',
-    color: '#388E3C',
-    bgColor: '#E8F5E9',
-    borderColor: '#66BB6A',
-  },
-};
-
-const getPriorityConfig = (priority) =>
-  priorityConfig[priority] || priorityConfig.medium;
+import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
+import { colors, getPriorityConfig } from '../utils/colors';
 
 function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
@@ -156,15 +118,8 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
     opacity.value = withTiming(0, { duration: 200 });
     cardTranslate.value = withTiming(300, { duration: 200 });
     
-    // Wywołaj onDelete i poczekaj na zakończenie
-    try {
-      await onDelete();
-    } catch (error) {
-      // Jeśli błąd, przywróć widok zadania
-      console.error('[TaskItem] Error deleting task:', error);
-      opacity.value = withTiming(1, { duration: 200 });
-      cardTranslate.value = withTiming(0, { duration: 200 });
-    }
+    // Wywołaj onDelete
+    await onDelete();
   };
 
   const handleCancelDelete = () => {
@@ -192,7 +147,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
         paddingVertical: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: isConfirmingDelete ? '#D32F2F' : colors.border,
+        borderColor: isConfirmingDelete ? colors.error : colors.border,
         shadowColor: colors.primary,
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
@@ -240,7 +195,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
                   flex: 1,
                   paddingVertical: 14,
                   borderRadius: 16,
-                  backgroundColor: '#D32F2F',
+                  backgroundColor: colors.error,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -248,7 +203,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
                 <Text style={{
                   fontSize: 16,
                   fontWeight: getFontWeight('600'),
-                  color: '#FFFFFF',
+                  color: colors.white,
                   fontFamily: getFontFamily('600', 'text'),
                 }}>
                   Usuń
@@ -278,7 +233,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
                 >
                   <Animated.View style={checkmarkStyle}>
                     {task.completed && (
-                      <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                      <Ionicons name="checkmark" size={18} color={colors.white} />
                     )}
                   </Animated.View>
                 </View>
@@ -382,12 +337,12 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
                 onPress={handleDeletePress}
                 style={{
                   padding: 10,
-                  backgroundColor: '#FFEBEE',
+                  backgroundColor: colors.errorBg,
                   borderRadius: 12,
                 }}
                 hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
               >
-                <Ionicons name="trash-outline" size={18} color="#D32F2F" />
+                <Ionicons name="trash-outline" size={18} color={colors.error} />
               </Pressable>
             </View>
           </View>

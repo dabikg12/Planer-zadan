@@ -2,14 +2,3 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Efekt rozmycia i powiększenia dla treści za tabBar */
-@media (min-width: 768px) {
-  /* Dla web - użyj backdrop-filter i transform */
-  [data-tabbar-blur] {
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    transform: scale(1.03);
-    transform-origin: bottom center;
-  }
-}
-

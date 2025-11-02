@@ -16,7 +16,7 @@ config.transformer = {
   }),
 };
 
-// Zawsze dodaj alias dla react-native-worklets na webie
+// Zawsze dodaj alias dla react-native-worklets i react-native-pager-view na webie
 // Metro resolver sprawdzi czy jesteśmy na webie podczas resolve
 // Na platformach natywnych normalny moduł będzie używany
 // Na webie zostanie użyty mock
@@ -28,6 +28,20 @@ config.resolver = {
     if (moduleName === 'react-native-worklets' && platform === 'web') {
       return {
         filePath: path.resolve(__dirname, 'utils/workletsMock.js'),
+        type: 'sourceFile',
+      };
+    }
+    // Jeśli ktoś próbuje załadować react-native-pager-view na webie, użyj mocka
+    if (moduleName === 'react-native-pager-view' && platform === 'web') {
+      return {
+        filePath: path.resolve(__dirname, 'utils/pagerViewMock.js'),
+        type: 'sourceFile',
+      };
+    }
+    // Jeśli ktoś próbuje załadować react-native-reanimated na webie, użyj mocka
+    if (moduleName === 'react-native-reanimated' && platform === 'web') {
+      return {
+        filePath: path.resolve(__dirname, 'utils/reanimatedMock.js'),
         type: 'sourceFile',
       };
     }

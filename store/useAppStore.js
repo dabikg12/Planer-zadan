@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import * as db from '../db/database';
-import { getMetadata, updatePreferences, setOnboardingCompleted } from '../utils/appMetadata';
+import { getMetadata, updatePreferences, updateMetadata } from '../utils/appMetadata';
 
 const normalizeTask = (task) => {
   if (!task || typeof task !== 'object') {
@@ -51,13 +52,16 @@ const useAppStore = create((set, get) => ({
   isLoading: false,
   metadata: null,
   isFirstLaunch: false,
+  isAppInitializing: false,
+  isAppInitialized: false,
+  shouldShowWelcomeModal: false,
 
   // Akcje
-  loadTasks: async (forceRefresh = false) => {
+  loadTasks: async () => {
     set({ isLoading: true });
     
     try {
-      const tasks = await db.getAllTasks(forceRefresh);
+      const tasks = await db.getAllTasks();
       
       if (!Array.isArray(tasks)) {
         set({ tasks: [], isLoading: false });
@@ -208,14 +212,88 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  completeOnboarding: async () => {
+  // Funkcje do zarządzania onboardingiem
+  setOnboardingCompleted: async (completed = true) => {
     try {
-      const updated = await setOnboardingCompleted(true);
+      const updated = await updateMetadata({ onboardingCompleted: completed });
       set({ metadata: updated });
       return updated;
     } catch (error) {
-      console.error('[Store] Error completing onboarding:', error);
+      console.error('[Store] Error setting onboarding completed:', error);
       throw error;
+    }
+  },
+
+  saveUserData: async (userData) => {
+    try {
+      const current = await getMetadata();
+      await updatePreferences({
+        userData: {
+          ...current.preferences?.userData,
+          ...userData,
+        },
+      });
+      const updated = await getMetadata();
+      set({ metadata: updated });
+      return updated;
+    } catch (error) {
+      console.error('[Store] Error saving user data:', error);
+      throw error;
+    }
+  },
+
+  saveSchedulePreferences: async (schedule) => {
+    try {
+      const current = await getMetadata();
+      await updatePreferences({
+        schedule: {
+          ...current.preferences?.schedule,
+          ...schedule,
+        },
+      });
+      const updated = await getMetadata();
+      set({ metadata: updated });
+      return updated;
+    } catch (error) {
+      console.error('[Store] Error saving schedule:', error);
+      throw error;
+    }
+  },
+
+  // Inicjalizacja aplikacji - ładuje wszystkie dane z bazy
+  initializeApp: async () => {
+    if (get().isAppInitializing || get().isAppInitialized) {
+      return; // Już trwa lub została zakończona
+    }
+
+    set({ isAppInitializing: true });
+    console.log('[Store] Starting app initialization...');
+
+    try {
+      // Załaduj metadane
+      const metadata = await get().loadMetadata();
+      
+      // Załaduj zadania
+      await get().loadTasks();
+      
+      console.log('[Store] App initialization complete.');
+      
+      // Sprawdź czy pokazać modal powitalny (zawsze pokazuj - wyłączone cachowanie)
+      const shouldShowWelcome = true; // Zawsze pokazuj modal
+      
+      set({ 
+        isAppInitialized: true, 
+        isAppInitializing: false,
+        shouldShowWelcomeModal: shouldShowWelcome,
+      });
+    } catch (error) {
+      console.error('[Store] Error initializing app:', error);
+      // Nawet przy błędzie oznaczamy jako zainicjalizowane, aby aplikacja mogła działać
+      set({ 
+        isAppInitialized: true, 
+        isAppInitializing: false,
+        shouldShowWelcomeModal: true,
+      });
     }
   },
 }));

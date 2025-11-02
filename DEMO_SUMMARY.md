@@ -80,7 +80,6 @@ Kompletna aplikacja demo gotowa do uruchomienia na iOS, Android i Web.
 ### State & Data
 - Zustand 5.0.8 - State management
 - Expo SQLite 16.0.8 - Lokalna baza danych
-- React Query 5.90.5 - Cache i synchronizacja
 
 ### UI & Styling
 - NativeWind 4.2.1 - Tailwind CSS

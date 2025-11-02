@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   RefreshControl,
   Text,
@@ -15,104 +15,30 @@ import {
   Animated,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
-import TaskItem from './components/TaskItem';
-import TaskForm from './components/TaskForm';
-import OnboardingScreen from './components/OnboardingScreen';
-import { initializeMetadata, getMetadata } from '../utils/appMetadata';
+import TaskItem from '../components/TaskItem';
+import TaskForm from '../components/TaskForm';
+import StatCard from '../components/StatCard';
 import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
-
-// Color palette - brown/beige theme
-const colors = {
-  background: '#F5F1E8',
-  card: '#FEFCFB',
-  primary: '#8B6F47',
-  primaryLight: '#A0826D',
-  accent: '#C4A484',
-  text: '#2A1F15',
-  textSecondary: '#6B5238',
-  textTertiary: '#A0826D',
-  border: '#E8DDD1',
-  active: '#C4A484',
-  completed: '#A0826D',
-  activeBg: '#F0E6D2',
-  completedBg: '#E8DDD1',
-};
-
-// StatCard Component
-const StatCard = ({ label, value, backgroundColor, borderColor, onPress }) => {
-  const scale = useSharedValue(1);
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  return (
-    <Animated.View style={[{ flex: 1 }, animatedStyle]}>
-      <Pressable
-        onPress={onPress}
-        onPressIn={() => {
-          scale.value = withSpring(0.96, { damping: 15 });
-          impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }}
-        onPressOut={() => {
-          scale.value = withSpring(1, { damping: 15 });
-        }}
-        style={{
-          backgroundColor,
-          borderRadius: 20,
-          padding: 18,
-          borderWidth: 1,
-          borderColor,
-        }}
-      >
-        <Text style={{
-          fontSize: 13,
-          fontWeight: getFontWeight('600'),
-          color: colors.primary,
-          textTransform: 'uppercase',
-          letterSpacing: 1,
-          marginBottom: 8,
-          fontFamily: getFontFamily('600', 'text'),
-        }}>
-          {label}
-        </Text>
-        <Text style={{
-          fontSize: 32,
-          fontWeight: getFontWeight('bold'),
-          color: colors.text,
-          fontFamily: getFontFamily('bold', 'display'),
-        }}>
-          {value}
-        </Text>
-      </Pressable>
-    </Animated.View>
-  );
-};
+import { colors } from '../utils/colors';
+import { formatDateLocal, parseDueDate } from '../utils/dateHelpers';
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
-  const { tasks, loadTasks, deleteTask, toggleTask, addTask: addTaskToStore, updateTask: updateTaskInStore } = useAppStore();
+  const { tasks, loadTasks, deleteTask, toggleTask, addTask: addTaskToStore, updateTask: updateTaskInStore, loadMetadata, metadata } = useAppStore();
   const [showForm, setShowForm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [initialized, setInitialized] = useState(false);
   const [taskFilter, setTaskFilter] = useState('active'); // 'active' lub 'completed'
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [userName, setUserName] = useState(null);
 
   const contentOpacity = useSharedValue(1);
-
-  useEffect(() => {
-    initializeApp();
-  }, []);
 
   // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
   useFocusEffect(
@@ -129,69 +55,41 @@ export default function HomeScreen() {
     }, [params?.openForm, router])
   );
 
-  const initializeApp = async () => {
-    console.log('[App] Starting initialization...');
-    try {
-      // Inicjalizuj metadane aplikacji (wykrywa pierwsze uruchomienie)
-      const { metadata, isFirstLaunch } = await initializeMetadata();
-      
-      if (isFirstLaunch) {
-        console.log('[App] First launch detected!');
-        // Wyświetl ekran powitalny przy pierwszym uruchomieniu
-        setShowOnboarding(true);
-      } else {
-        console.log('[App] Regular launch');
-        // Sprawdź czy onboarding został ukończony
-        if (!metadata.onboardingCompleted) {
-          setShowOnboarding(true);
-        } else {
-          // Załaduj imię użytkownika jeśli jest dostępne
-          if (metadata.preferences?.userName) {
-            setUserName(metadata.preferences.userName);
-          }
-        }
-      }
-      
-      // Załaduj zadania
-      await loadTasks();
-      console.log('[App] Initialization complete.');
-    } catch (error) {
-      console.error('[App] Error initializing app:', error);
-    } finally {
-      setInitialized(true);
-    }
-  };
+  // Memoizuj dzisiejszą datę - oblicz tylko raz i odświeżaj raz dziennie
+  const todayString = useMemo(() => formatDateLocal(new Date()), []);
 
-  const handleOnboardingComplete = async () => {
-    setShowOnboarding(false);
-    // Odśwież metadane aby załadować imię użytkownika
-    try {
-      const metadata = await getMetadata();
-      if (metadata.preferences?.userName) {
-        setUserName(metadata.preferences.userName);
-      }
-    } catch (error) {
-      console.error('[App] Error loading metadata after onboarding:', error);
+  // Funkcja pomocnicza do sprawdzania czy zadanie jest na dzisiaj lub bez daty
+  // Używamy useCallback aby uniknąć tworzenia nowej funkcji przy każdym renderze
+  const isTaskForToday = useCallback((task) => {
+    // Zadanie bez daty jest zawsze wyświetlane
+    if (!task.dueDate) {
+      return true;
     }
-  };
+
+    // Użyj parseDueDate zamiast ręcznego parsowania
+    const taskDate = parseDueDate(task.dueDate);
+    if (!taskDate) {
+      return false;
+    }
+
+    // Porównaj sformatowane daty - szybsze niż startsWith na stringu
+    const taskDateString = formatDateLocal(taskDate);
+    return taskDateString === todayString;
+  }, [todayString]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks(true); // Force refresh - bypass cache
+    await loadTasks();
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleFormSubmit = async (taskData) => {
     try {
-      console.log('[Index] handleFormSubmit called with:', taskData);
       if (editingTask) {
-        console.log('[Index] Updating task:', editingTask.id);
         await updateTaskInStore(editingTask.id, taskData);
       } else {
-        console.log('[Index] Adding new task');
-        const taskId = await addTaskToStore(taskData);
-        console.log('[Index] Task added with ID:', taskId);
+        await addTaskToStore(taskData);
       }
       setEditingTask(null);
       setShowForm(false);
@@ -248,28 +146,16 @@ export default function HomeScreen() {
   };
 
   const activeTasks = useMemo(() => {
-    console.log('[Index] Calculating activeTasks, total tasks:', tasks.length);
-    console.log('[Index] Tasks sample:', tasks.slice(0, 2).map(t => ({ id: t.id, title: t.title, completed: t.completed, completedType: typeof t.completed })));
     const filtered = tasks.filter(task => {
-      const isNotCompleted = !task.completed;
-      console.log('[Index] Task', task.id, 'completed:', task.completed, 'type:', typeof task.completed, 'filtered:', isNotCompleted);
-      return isNotCompleted;
+      return !task.completed && isTaskForToday(task);
     });
-    console.log('[Index] Active tasks after filter:', filtered.length);
-    const result = filtered.slice(0, 5);
-    console.log('[Index] Active tasks after slice:', result.length);
-    return result;
-  }, [tasks]);
+    return filtered.slice(0, 5);
+  }, [tasks, isTaskForToday]);
 
   const completedTasks = useMemo(() => {
-    const filtered = tasks.filter(task => task.completed);
+    const filtered = tasks.filter(task => task.completed && isTaskForToday(task));
     return filtered.slice(0, 5);
-  }, [tasks]);
-
-  const completedTasksCount = useMemo(
-    () => tasks.filter(task => task.completed).length,
-    [tasks]
-  );
+  }, [tasks, isTaskForToday]);
 
   const displayedTasks = useMemo(() => {
     return taskFilter === 'active' ? activeTasks : completedTasks;
@@ -279,56 +165,13 @@ export default function HomeScreen() {
     opacity: contentOpacity.value,
   }));
 
-  const loadingAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: contentOpacity.value,
-  }));
-
-  if (!initialized) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <StatusBar style="dark" />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Animated.View style={loadingAnimatedStyle}>
-            <View style={{
-              width: 96,
-              height: 96,
-              borderRadius: 28,
-              backgroundColor: colors.card,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 24,
-              boxShadow: '0 4px 12px rgba(139, 111, 71, 0.1)',
-              elevation: 8,
-            }}>
-              <Ionicons name="checkmark-circle" size={48} color={colors.primary} />
-            </View>
-            <Text style={{
-              color: colors.text,
-              fontSize: 28,
-              fontWeight: getFontWeight('bold'),
-              textAlign: 'center',
-              fontFamily: getFontFamily('bold', 'display'),
-            }}>
-              Planer
-            </Text>
-            <Text style={{
-              color: colors.textSecondary,
-              fontSize: 17,
-              marginTop: 12,
-              textAlign: 'center',
-              fontFamily: getFontFamily('normal', 'text'),
-            }}>
-              Ładowanie zadań...
-            </Text>
-          </Animated.View>
-        </View>
-      </View>
-    );
-  }
+  // Renderuj główny widok natychmiast, bez ekranu ładowania
+  // Ekran ładowania może powodować białe mignięcie przy przełączaniu zakładek
+  // Dane są już załadowane przez store w _layout.js podczas inicjalizacji aplikacji
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
@@ -362,7 +205,7 @@ export default function HomeScreen() {
                     marginBottom: 8,
                     fontFamily: getFontFamily('bold', 'display'),
                   }}>
-                    {userName ? `Witaj, ${userName}!` : 'Planer'}
+                    Zadania na dziś
                   </Text>
                   <Text style={{
                     fontSize: 17,
@@ -378,14 +221,14 @@ export default function HomeScreen() {
               <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
                 <StatCard
                   label="Aktywne"
-                  value={tasks.length - completedTasksCount}
+                  value={activeTasks.length}
                   backgroundColor={colors.activeBg}
                   borderColor={colors.active}
                   onPress={() => setTaskFilter('active')}
                 />
                 <StatCard
                   label="Zrealizowane"
-                  value={completedTasksCount}
+                  value={completedTasks.length}
                   backgroundColor={colors.completedBg}
                   borderColor={colors.completed}
                   onPress={() => setTaskFilter('completed')}
@@ -575,11 +418,6 @@ export default function HomeScreen() {
         }}
         onSubmit={handleFormSubmit}
         initialTask={editingTask}
-      />
-
-      <OnboardingScreen
-        visible={showOnboarding}
-        onComplete={handleOnboardingComplete}
       />
     </View>
   );

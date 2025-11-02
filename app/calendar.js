@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useRef } from 'react';
+﻿import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
   Alert,
   RefreshControl,
@@ -71,63 +71,16 @@ import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
-import TaskItem from './components/TaskItem';
-import TaskForm from './components/TaskForm';
+import TaskItem from '../components/TaskItem';
+import TaskForm from '../components/TaskForm';
 import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
+import { colors, priorityColors } from '../utils/colors';
+import { parseDueDate, formatDateLocal } from '../utils/dateHelpers';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-// Color palette - brown/beige theme
-const colors = {
-  background: '#F5F1E8',
-  card: '#FEFCFB',
-  primary: '#8B6F47',
-  primaryLight: '#A0826D',
-  accent: '#C4A484',
-  text: '#2A1F15',
-  textSecondary: '#6B5238',
-  textTertiary: '#A0826D',
-  border: '#E8DDD1',
-  active: '#C4A484',
-  completed: '#A0826D',
-  activeBg: '#F0E6D2',
-  completedBg: '#E8DDD1',
-};
-
-const parseDueDate = (value) => {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === 'string') {
-    // Parse date string (YYYY-MM-DD) as local date, not UTC
-    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (match) {
-      const [, year, month, day] = match.map(Number);
-      const date = new Date(year, month - 1, day);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-    // Fallback for other date formats
-    const normalized = value.length > 10 ? value : `${value}T00:00:00`;
-    const date = new Date(normalized);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-// Convert Date to YYYY-MM-DD format using local timezone
-const formatDateLocal = (date) => {
-  if (!date) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
 
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
@@ -144,8 +97,17 @@ export default function CalendarScreen() {
 
   const contentOpacity = useSharedValue(1);
 
+  // Memoizuj dzisiejszą datę - oblicz tylko raz, nie przy każdym renderze dnia
+  const todayString = useMemo(() => formatDateLocal(new Date()), []);
+
+  // Ładuj zadania tylko przy pierwszym zamontowaniu, nie przy każdym focus
+  // Użyj useRef aby śledzić czy już załadowaliśmy dane
+  const hasLoadedRef = useRef(false);
   useEffect(() => {
-    loadTasks();
+    if (!hasLoadedRef.current) {
+      hasLoadedRef.current = true;
+      loadTasks();
+    }
   }, []);
 
   // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
@@ -165,7 +127,7 @@ export default function CalendarScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks(true); // Force refresh - bypass cache
+    await loadTasks();
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
@@ -286,12 +248,6 @@ export default function CalendarScreen() {
   const markedDates = useMemo(() => {
     const marks = {};
 
-    const priorityColors = {
-      high: '#D32F2F',
-      medium: '#F57C00',
-      low: '#388E3C',
-    };
-
     tasks.forEach((task) => {
       const date = parseDueDate(task.dueDate);
       if (!date) {
@@ -344,14 +300,15 @@ export default function CalendarScreen() {
 
   // Niestandardowy komponent dnia - kropki POD przyciskiem, nie wewnątrz
   // Działa zarówno na web jak i mobile
-  const renderDayComponent = ({ date, state, marking, onPress }) => {
+  // Używamy useCallback aby uniknąć tworzenia nowej funkcji przy każdym renderze
+  const renderDayComponent = useCallback(({ date, state, marking, onPress }) => {
     if (!date || !date.dateString) {
       return <View style={{ flex: 1, minHeight: 50 }} />;
     }
     
     const dateKey = date.dateString;
     const isSelected = selectedDate === dateKey;
-    const isToday = dateKey === formatDateLocal(new Date());
+    const isToday = dateKey === todayString;
     const isDisabled = state === 'disabled';
     
     // Pobierz kropki z markedDates dla tego dnia
@@ -428,11 +385,11 @@ export default function CalendarScreen() {
         )}
       </View>
     );
-  };
+  }, [selectedDate, todayString, markedDates]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Animated.View style={[{ flex: 1, paddingTop: 32, paddingHorizontal: 20 }, contentAnimatedStyle]}>
         <View style={{
           backgroundColor: colors.card,
@@ -502,7 +459,7 @@ export default function CalendarScreen() {
           >
             {selectedDateTasks.length > 0 ? (
               <View style={{ paddingBottom: 32 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingTop: 24 }}>
                   <Text style={{
                     fontSize: 22,
                     fontWeight: getFontWeight('bold'),
@@ -766,15 +723,15 @@ export default function CalendarScreen() {
                             paddingHorizontal: 12,
                             paddingVertical: 6,
                             borderRadius: 12,
-                            backgroundColor: task.priority === 'high' ? '#FFEBEE' : task.priority === 'medium' ? '#FFF3E0' : '#E8F5E9',
+                            backgroundColor: task.priority === 'high' ? '#3A2626' : task.priority === 'medium' ? '#3A2F1F' : '#2A3A2A',
                             borderWidth: 1,
-                            borderColor: task.priority === 'high' ? '#EF5350' : task.priority === 'medium' ? '#FF9800' : '#66BB6A',
+                            borderColor: task.priority === 'high' ? '#5A3636' : task.priority === 'medium' ? '#5A4A2F' : '#4A5A4A',
                           }}>
                             <Text style={{
                               fontSize: 11,
                               fontWeight: getFontWeight('600'),
                               textTransform: 'uppercase',
-                              color: task.priority === 'high' ? '#D32F2F' : task.priority === 'medium' ? '#F57C00' : '#388E3C',
+                              color: task.priority === 'high' ? '#FF6B6B' : task.priority === 'medium' ? '#FFA726' : '#66BB6A',
                               fontFamily: getFontFamily('600', 'text'),
                             }}>
                               {task.priority === 'high' ? 'Wysoki' : task.priority === 'medium' ? 'Średni' : 'Niski'}

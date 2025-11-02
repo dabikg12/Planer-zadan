@@ -22,26 +22,10 @@ import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
-import TaskItem from './components/TaskItem';
-import TaskForm from './components/TaskForm';
+import TaskItem from '../components/TaskItem';
+import TaskForm from '../components/TaskForm';
 import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
-
-// Color palette - brown/beige theme
-const colors = {
-  background: '#F5F1E8',
-  card: '#FEFCFB',
-  primary: '#8B6F47',
-  primaryLight: '#A0826D',
-  accent: '#C4A484',
-  text: '#2A1F15',
-  textSecondary: '#6B5238',
-  textTertiary: '#A0826D',
-  border: '#E8DDD1',
-  active: '#C4A484',
-  completed: '#A0826D',
-  activeBg: '#F0E6D2',
-  completedBg: '#E8DDD1',
-};
+import { colors } from '../utils/colors';
 
 export default function TasksScreen() {
   const router = useRouter();
@@ -58,8 +42,14 @@ export default function TasksScreen() {
 
   const contentOpacity = useSharedValue(1);
 
+  // Ładuj zadania tylko przy pierwszym zamontowaniu, nie przy każdym focus
+  // Użyj useRef aby śledzić czy już załadowaliśmy dane
+  const hasLoadedRef = useRef(false);
   useEffect(() => {
-    loadTasks();
+    if (!hasLoadedRef.current) {
+      hasLoadedRef.current = true;
+      loadTasks();
+    }
   }, []);
 
   // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
@@ -79,7 +69,7 @@ export default function TasksScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadTasks(true); // Force refresh - bypass cache
+    await loadTasks();
     setRefreshing(false);
     impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
@@ -91,14 +81,10 @@ export default function TasksScreen() {
 
   const handleFormSubmit = async (taskData) => {
     try {
-      console.log('[Tasks] handleFormSubmit called with:', taskData);
       if (editingTask) {
-        console.log('[Tasks] Updating task:', editingTask.id);
         await updateTaskInStore(editingTask.id, taskData);
       } else {
-        console.log('[Tasks] Adding new task');
-        const taskId = await addTaskToStore(taskData);
-        console.log('[Tasks] Task added with ID:', taskId);
+        await addTaskToStore(taskData);
       }
       setEditingTask(null);
       setShowForm(false);
@@ -186,7 +172,7 @@ export default function TasksScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Animated.ScrollView
         ref={scrollViewRef}
         style={[{ flex: 1 }]}

@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "scheme": "flineo-planer",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -24,12 +23,13 @@
       }
     },
     "android": {
+      "package": "com.flineo.planer",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "jsEngine": "hermes"
+      "jsEngine": "hermes",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/favicon.png"

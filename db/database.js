@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import { cacheStorage } from '../utils/cacheStorage';
 
 // Wykrywanie platformy - wcześniejsze sprawdzenie dla optymalizacji
 // Używamy tylko Platform.OS, ponieważ jest najbardziej niezawodne
@@ -57,6 +56,8 @@ const getStoredTasks = () => {
     }
     
     // Update nextId based on stored tasks
+    // Zoptymalizowane: nie musimy przechowywać maxId jeśli zadania są usuwane
+    // Używamy prostego licznika bazującego na aktualnej długości
     if (tasks.length > 0) {
       const maxId = Math.max(...tasks.map(t => (t && t.id) ? Number(t.id) : 0));
       nextId = Math.max(nextId, maxId + 1);
@@ -117,8 +118,15 @@ const initializationPromise = new Promise(async (resolve, reject) => {
     
     const database = await SQLiteModule.openDatabaseAsync('flineo-planer.db');
     
+    // Wykonaj PRAGMA osobno dla bezpieczeństwa
+    await database.execAsync(`PRAGMA encoding = 'UTF-8'`);
+    await database.execAsync(`PRAGMA foreign_keys = OFF`);
+    await database.execAsync(`PRAGMA journal_mode = WAL`);
+    await database.execAsync(`PRAGMA synchronous = NORMAL`);
+    await database.execAsync(`PRAGMA temp_store = MEMORY`);
+    
+    // Utwórz tabelę
     await database.execAsync(`
-      PRAGMA encoding = 'UTF-8';
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -126,17 +134,50 @@ const initializationPromise = new Promise(async (resolve, reject) => {
         completed INTEGER DEFAULT 0,
         dueDate TEXT,
         priority TEXT DEFAULT 'medium',
+        time TEXT,
         calendarEventId TEXT,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
-      );
-
-      -- Indeksy dla optymalizacji zapytań
-      CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed);
-      CREATE INDEX IF NOT EXISTS idx_tasks_dueDate ON tasks(dueDate);
-      CREATE INDEX IF NOT EXISTS idx_tasks_createdAt ON tasks(createdAt);
-      CREATE INDEX IF NOT EXISTS idx_tasks_completed_dueDate ON tasks(completed, dueDate);
+      )
     `);
+
+    // Utwórz indeksy osobno
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_completed_dueDate ON tasks(completed, dueDate)
+    `);
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_dueDate ON tasks(dueDate)
+    `);
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_createdAt ON tasks(createdAt DESC)
+    `);
+    
+    // ANALYZE tylko jeśli tabela ma dane (bezpieczniejsze)
+    try {
+      const tableInfo = await database.getFirstAsync(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='tasks'"
+      );
+      if (tableInfo && tableInfo.count > 0) {
+        const taskCount = await database.getFirstAsync('SELECT COUNT(*) as count FROM tasks');
+        if (taskCount && taskCount.count > 0) {
+          await database.execAsync('ANALYZE tasks');
+        }
+      }
+    } catch (analyzeError) {
+      // ANALYZE nie jest krytyczne, ignoruj błędy
+      console.warn('[DB] ANALYZE skipped (non-critical):', analyzeError.message);
+    }
+    
+    // Migracja: dodaj kolumnę time jeśli nie istnieje (dla istniejących baz)
+    try {
+      await database.execAsync('ALTER TABLE tasks ADD COLUMN time TEXT');
+      console.log('[DB] Migration: Added time column to tasks table');
+    } catch (error) {
+      // Kolumna już istnieje lub błąd - ignoruj (może być "duplicate column name")
+      if (!error.message || !error.message.includes('duplicate column name')) {
+        console.warn('[DB] Migration warning (expected for existing columns):', error.message);
+      }
+    }
     
     db = database;
     resolve(database);
@@ -167,6 +208,9 @@ export const addTask = async (task) => {
     ? task.dueDate.trim()
     : null;
   const priority = task.priority || 'medium';
+  const time = typeof task.time === 'string' && task.time.trim().length > 0
+    ? task.time.trim()
+    : null;
   const calendarEventId = typeof task.calendarEventId === 'string' && task.calendarEventId.trim().length > 0
     ? task.calendarEventId.trim()
     : null;
@@ -182,6 +226,7 @@ export const addTask = async (task) => {
         completed: 0,
         dueDate,
         priority,
+        time,
         calendarEventId,
         createdAt: now,
         updatedAt: now,
@@ -189,8 +234,6 @@ export const addTask = async (task) => {
       tasks.push(newTask);
       saveTasksToStorage(tasks);
       
-      // Po udanym dodaniu, invaliduj cache
-      await cacheStorage.invalidateTasksCache();
       
       return { ...newTask };
     } catch (error) {
@@ -207,8 +250,8 @@ export const addTask = async (task) => {
 
   try {
     const result = await dbInstance.runAsync(
-      'INSERT INTO tasks (title, description, completed, dueDate, priority, calendarEventId, createdAt, updatedAt) VALUES (?, ?, 0, ?, ?, ?, ?, ?)',
-      [title, description, dueDate, priority, calendarEventId, now, now]
+      'INSERT INTO tasks (title, description, completed, dueDate, priority, time, calendarEventId, createdAt, updatedAt) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)',
+      [title, description, dueDate, priority, time, calendarEventId, now, now]
     );
 
     let taskId = undefined;
@@ -235,8 +278,6 @@ export const addTask = async (task) => {
 
     const persistedTask = await getTaskById(taskId);
     
-    // Po udanym dodaniu, invaliduj cache
-    await cacheStorage.invalidateTasksCache();
     
     if (persistedTask) {
       return persistedTask;
@@ -250,6 +291,7 @@ export const addTask = async (task) => {
       completed: 0,
       dueDate,
       priority,
+      time,
       calendarEventId,
       createdAt: now,
       updatedAt: now,
@@ -274,6 +316,9 @@ export const updateTask = async (id, task) => {
     ? task.dueDate.trim()
     : null;
   const priority = task.priority || 'medium';
+  const time = typeof task.time === 'string' && task.time.trim().length > 0
+    ? task.time.trim()
+    : null;
   const completed = task.completed ? 1 : 0;
   const calendarEventId = typeof task.calendarEventId === 'string' && task.calendarEventId.trim().length > 0
     ? task.calendarEventId.trim()
@@ -294,13 +339,12 @@ export const updateTask = async (id, task) => {
         completed,
         dueDate,
         priority,
+        time,
         calendarEventId,
         updatedAt: now,
       };
       saveTasksToStorage(tasks);
       
-      // Po udanej aktualizacji, invaliduj cache
-      await cacheStorage.invalidateTasksCache();
       
       return;
     } catch (error) {
@@ -316,12 +360,10 @@ export const updateTask = async (id, task) => {
   }
 
   await dbInstance.runAsync(
-    'UPDATE tasks SET title = ?, description = ?, completed = ?, dueDate = ?, priority = ?, calendarEventId = ?, updatedAt = ? WHERE id = ?',
-    [title, description, completed, dueDate, priority, calendarEventId, now, normalizedId]
+    'UPDATE tasks SET title = ?, description = ?, completed = ?, dueDate = ?, priority = ?, time = ?, calendarEventId = ?, updatedAt = ? WHERE id = ?',
+    [title, description, completed, dueDate, priority, time, calendarEventId, now, normalizedId]
   );
   
-  // Po udanej aktualizacji, invaliduj cache
-  await cacheStorage.invalidateTasksCache();
 };
 
 // Funkcja do usuwania zadania
@@ -354,8 +396,8 @@ export const deleteTask = async (id) => {
         throw new Error(`Failed to delete task ${normalizedId} from localStorage`);
       }
       
-      // Po udanym usunięciu, invaliduj cache
-      await cacheStorage.invalidateTasksCache();
+      // Optymalizacja: nie przechowujemy informacji o usuniętych zadaniach
+      // localStorage automatycznie zwalnia miejsce po usunięciu
       
       console.log(`[DB] Task ${normalizedId} successfully deleted from localStorage`);
       return;
@@ -381,7 +423,7 @@ export const deleteTask = async (id) => {
     }
     
     // Usuń zadanie z bazy danych
-    const result = await dbInstance.runAsync('DELETE FROM tasks WHERE id = ?', [normalizedId]);
+    await dbInstance.runAsync('DELETE FROM tasks WHERE id = ?', [normalizedId]);
     
     // Weryfikacja: sprawdź czy zadanie zostało usunięte
     const taskAfterDelete = await dbInstance.getFirstAsync('SELECT id FROM tasks WHERE id = ?', [normalizedId]);
@@ -390,8 +432,31 @@ export const deleteTask = async (id) => {
       throw new Error(`Failed to delete task ${normalizedId} from database`);
     }
     
-    // Po udanym usunięciu, invaliduj cache
-    await cacheStorage.invalidateTasksCache();
+    // Defragmentacja bazy po usunięciu (opcjonalna optymalizacja)
+    // VACUUM może być kosztowne, więc wykonujemy go tylko dla małych baz
+    // Uwaga: VACUUM wymaga transakcji, więc wykonujemy go asynchronicznie w tle
+    // aby nie blokować operacji DELETE
+    try {
+      const stats = await dbInstance.getFirstAsync('SELECT COUNT(*) as count FROM tasks');
+      const taskCount = stats?.count || 0;
+      
+      // VACUUM tylko jeśli baza ma mniej niż 50 zadań (dla wydajności)
+      // Dla większych baz VACUUM może być wolne, więc pomijamy
+      if (taskCount > 0 && taskCount < 50) {
+        // Wykonaj VACUUM asynchronicznie (nie blokuj operacji)
+        setTimeout(async () => {
+          try {
+            await dbInstance.execAsync('VACUUM');
+            console.log('[DB] Database vacuumed after delete');
+          } catch (vacuumError) {
+            console.warn('[DB] Vacuum failed (non-critical):', vacuumError.message);
+          }
+        }, 100);
+      }
+    } catch (vacuumError) {
+      // VACUUM nie jest krytyczne, ignoruj błędy
+      console.warn('[DB] Vacuum check skipped:', vacuumError.message);
+    }
     
     console.log(`[DB] Task ${normalizedId} successfully deleted from database`);
   } catch (error) {
@@ -423,7 +488,11 @@ export const getTaskById = async (id) => {
   }
   
   try {
-    const result = await dbInstance.getFirstAsync('SELECT * FROM tasks WHERE id = ?', [normalizedId]);
+    // Zoptymalizowane: SELECT tylko potrzebnych kolumn, użycie PRIMARY KEY (szybkie)
+    const result = await dbInstance.getFirstAsync(
+      'SELECT id, title, description, completed, dueDate, priority, time, calendarEventId, createdAt, updatedAt FROM tasks WHERE id = ?',
+      [normalizedId]
+    );
     return result || null;
   } catch (error) {
     console.error('[DB] Error in getTaskById:', error);
@@ -433,12 +502,6 @@ export const getTaskById = async (id) => {
 
 // Funkcja do pobierania zadań według daty
 export const getTasksByDate = async (date) => {
-  // Sprawdź cache
-  const cached = await cacheStorage.getCachedTasksByDate(date);
-  if (cached) {
-    return cached;
-  }
-  
   // Web mode: use localStorage
   if (isWeb) {
     try {
@@ -450,7 +513,6 @@ export const getTasksByDate = async (date) => {
         return dateB - dateA;
       });
       
-      await cacheStorage.cacheTasksByDate(date, sorted);
       return sorted;
     } catch (error) {
       console.error('[DB] Error getting tasks by date from localStorage:', error);
@@ -464,27 +526,19 @@ export const getTasksByDate = async (date) => {
     return [];
   }
 
+  // Zoptymalizowane: SELECT tylko potrzebnych kolumn, użycie indeksu dla dueDate
   const result = await dbInstance.getAllAsync(
-    'SELECT * FROM tasks WHERE dueDate LIKE ? ORDER BY createdAt DESC',
+    'SELECT id, title, description, completed, dueDate, priority, time, calendarEventId, createdAt, updatedAt FROM tasks WHERE dueDate LIKE ? ORDER BY createdAt DESC',
     [date + '%']
   );
   
   const tasks = result || [];
-  await cacheStorage.cacheTasksByDate(date, tasks);
   
   return tasks;
 };
 
 // Funkcja do pobierania wszystkich zadań
-export const getAllTasks = async (forceRefresh = false) => {
-  // Sprawdź cache jeśli nie wymuszamy odświeżenia
-  if (!forceRefresh) {
-    const cached = await cacheStorage.getCachedTasks();
-    if (cached) {
-      return cached;
-    }
-  }
-
+export const getAllTasks = async () => {
   // Web mode: use localStorage
   if (isWeb) {
     try {
@@ -500,9 +554,6 @@ export const getAllTasks = async (forceRefresh = false) => {
         return dateB - dateA; // Descending (newest first)
       });
       
-      // Zapisz do cache
-      await cacheStorage.cacheTasks(sorted);
-      
       return sorted;
     } catch (error) {
       console.error('[DB] Error loading tasks from localStorage:', error);
@@ -517,11 +568,12 @@ export const getAllTasks = async (forceRefresh = false) => {
   }
 
   try {
-    const result = await dbInstance.getAllAsync('SELECT * FROM tasks ORDER BY createdAt DESC', []);
+    // Zoptymalizowane: SELECT tylko potrzebnych kolumn zamiast *
+    const result = await dbInstance.getAllAsync(
+      'SELECT id, title, description, completed, dueDate, priority, time, calendarEventId, createdAt, updatedAt FROM tasks ORDER BY createdAt DESC',
+      []
+    );
     const tasks = result || [];
-    
-    // Zapisz do cache
-    await cacheStorage.cacheTasks(tasks);
     
     return tasks;
   } catch (error) {
@@ -530,10 +582,29 @@ export const getAllTasks = async (forceRefresh = false) => {
   }
 };
 
+// Funkcja do optymalizacji bazy danych (VACUUM + ANALYZE)
+// Można wywołać okresowo lub po większej liczbie operacji DELETE
+export const optimizeDatabase = async () => {
+  if (isWeb) return;
+  
+  const dbInstance = await getDb();
+  if (!dbInstance) {
+    return;
+  }
+  
+  try {
+    // VACUUM - defragmentuje bazę, zwalnia nieużywane miejsce
+    await dbInstance.execAsync('VACUUM');
+    
+    // ANALYZE - aktualizuje statystyki dla query planera
+    await dbInstance.execAsync('ANALYZE tasks');
+    
+    console.log('[DB] Database optimized successfully');
+  } catch (error) {
+    console.warn('[DB] Database optimization failed (non-critical):', error.message);
+  }
+};
+
 // Eksportujemy tylko funkcje operujące na bazie, nie samą bazę
 export { initializationPromise };
 
-// Eksportuj funkcję do ręcznego invalidowania cache (przydatne przy pull-to-refresh)
-export const invalidateTasksCache = () => {
-  return cacheStorage.invalidateTasksCache();
-};
