@@ -56,6 +56,7 @@ const useAppStore = create((set, get) => ({
   isAppInitializing: false,
   isAppInitialized: false,
   shouldShowWelcomeModal: false,
+  shouldShowLoader: false,
 
   // Akcje
   loadTasks: async () => {
@@ -319,6 +320,7 @@ const useAppStore = create((set, get) => ({
         isAppInitializing: false,
         isAppInitialized: false,
         shouldShowWelcomeModal: true, // Pokaż welcome modal po resecie
+        shouldShowLoader: true, // Pokaż loader z animacją
       });
       
       // Załaduj domyślne metadane

@@ -140,23 +140,8 @@ export default function SettingsScreen() {
             try {
               await resetApp();
               notificationAsync(Haptics.NotificationFeedbackType.Success);
-              Alert.alert(
-                'Sukces',
-                'Aplikacja została zresetowana. Zostaniesz przekierowany do ekranu głównego.',
-                [
-                  {
-                    text: 'OK',
-                    onPress: () => {
-                      router.replace('/');
-                      // Przeładuj aplikację po resecie
-                      setTimeout(() => {
-                        // Wymuś ponowne załadowanie danych
-                        loadMetadata();
-                      }, 500);
-                    },
-                  },
-                ]
-              );
+              // Przekieruj do ekranu głównego - loader i modal pojawią się automatycznie
+              router.replace('/');
             } catch (error) {
               console.error('[Settings] Error resetting app:', error);
               Alert.alert('Błąd', 'Nie udało się zresetować aplikacji. Spróbuj ponownie.');

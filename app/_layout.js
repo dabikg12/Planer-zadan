@@ -33,7 +33,7 @@ import { createFadeInPulseAnimation } from '../utils/commonAnimations';
 import { colors } from '../utils/colors';
 
 export default function RootLayout() {
-  const { isAppInitialized, isAppInitializing, initializeApp, shouldShowWelcomeModal } = useAppStore();
+  const { isAppInitialized, isAppInitializing, initializeApp, shouldShowWelcomeModal, shouldShowLoader } = useAppStore();
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [showLoader, setShowLoader] = useState(true);
   const [isLoaderExiting, setIsLoaderExiting] = useState(false);
@@ -45,6 +45,7 @@ export default function RootLayout() {
   const tabNavigatorScale = useRef(new Animated.Value(0.95)).current;
   const tabNavigatorOpacity = useRef(new Animated.Value(0)).current;
   const hasAnimated = useRef(false);
+  const loaderResetHandled = useRef(false);
 
   // Ustaw wartości początkowe dla animacji
   useEffect(() => {
@@ -59,6 +60,26 @@ export default function RootLayout() {
     initializeApp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // initializeApp jest stabilną funkcją ze store
+
+  // Obsługa pokazania loadera po resecie aplikacji
+  useEffect(() => {
+    if (shouldShowLoader && !loaderResetHandled.current) {
+      loaderResetHandled.current = true;
+      // Resetuj stan loadera i pokaż go z animacją
+      setShowLoader(true);
+      setIsLoaderExiting(false);
+      loaderStartTimeRef.current = Date.now();
+      hasAnimated.current = false; // Resetuj flagę animacji, aby TabNavigator się ponownie animował
+      // Resetuj animacje TabNavigator
+      tabNavigatorOpacity.setValue(0);
+      tabNavigatorScale.setValue(0.95);
+      // Uruchom inicjalizację aplikacji
+      initializeApp();
+    } else if (!shouldShowLoader) {
+      // Resetuj flagę gdy loader nie powinien być pokazany
+      loaderResetHandled.current = false;
+    }
+  }, [shouldShowLoader, initializeApp]);
 
   // Rozpocznij animację zamykania loadera po zakończeniu inicjalizacji
   // Zapewnij, że loader trwa minimum 4 sekundy (wliczając animacje)
@@ -98,6 +119,9 @@ export default function RootLayout() {
   // Obsługa zakończenia animacji zamykania loadera
   const handleLoaderExitComplete = React.useCallback(() => {
     setShowLoader(false);
+    // Wyłącz flagę loadera w store
+    useAppStore.setState({ shouldShowLoader: false });
+    loaderResetHandled.current = false; // Resetuj flagę obsługi resetu
     // Pokaż modal powitalny zaraz po zakończeniu animacji loadera
     if (shouldShowWelcomeModal) {
       setShowWelcomeModal(true);
