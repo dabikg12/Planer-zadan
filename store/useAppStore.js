@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Platform } from 'react-native';
 import * as db from '../db/database';
-import { getMetadata, updatePreferences, updateMetadata } from '../utils/appMetadata';
+import { getMetadata, updatePreferences, updateMetadata, resetMetadata } from '../utils/appMetadata';
 
 const normalizeTask = (task) => {
   if (!task || typeof task !== 'object') {
@@ -279,8 +279,9 @@ const useAppStore = create((set, get) => ({
       
       console.log('[Store] App initialization complete.');
       
-      // Sprawdź czy pokazać modal powitalny (zawsze pokazuj - wyłączone cachowanie)
-      const shouldShowWelcome = false; // Tymczasowo wyłączone
+      // Sprawdź czy pokazać modal powitalny - tylko gdy onboarding nie został ukończony
+      const onboardingCompleted = metadata?.onboardingCompleted === true;
+      const shouldShowWelcome = !onboardingCompleted;
       
       set({ 
         isAppInitialized: true, 
@@ -295,6 +296,39 @@ const useAppStore = create((set, get) => ({
         isAppInitializing: false,
         shouldShowWelcomeModal: false,
       });
+    }
+  },
+
+  // Funkcja do resetowania aplikacji (czyści wszystkie dane)
+  resetApp: async () => {
+    try {
+      console.log('[Store] Starting app reset...');
+      
+      // Wyczyść wszystkie zadania
+      await db.clearAllTasks();
+      
+      // Zresetuj metadane do wartości domyślnych
+      await resetMetadata();
+      
+      // Wyczyść stan aplikacji
+      set({
+        tasks: [],
+        selectedTask: null,
+        metadata: null,
+        isFirstLaunch: false,
+        isAppInitializing: false,
+        isAppInitialized: false,
+        shouldShowWelcomeModal: true, // Pokaż welcome modal po resecie
+      });
+      
+      // Załaduj domyślne metadane
+      const defaultMetadata = await getMetadata();
+      set({ metadata: defaultMetadata });
+      
+      console.log('[Store] App reset completed successfully');
+    } catch (error) {
+      console.error('[Store] Error resetting app:', error);
+      throw error;
     }
   },
 

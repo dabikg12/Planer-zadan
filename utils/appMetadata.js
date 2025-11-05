@@ -241,3 +241,28 @@ export const updateMetadata = async (metadataUpdates) => {
   return updated;
 };
 
+// Funkcja do resetowania metadanych do wartości domyślnych
+export const resetMetadata = async () => {
+  const now = new Date().toISOString();
+  const resetMetadata = {
+    ...defaultMetadata,
+    lastLaunchDate: now,
+    appVersion: '1.0.0',
+    onboardingCompleted: false,
+  };
+  
+  if (isWeb) {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(METADATA_KEY);
+      saveMetadataToStorage(resetMetadata);
+    }
+    console.log('[Metadata] Metadata reset to default (web)');
+  } else {
+    await initMetadataDb();
+    await saveMetadataToDb('metadata', resetMetadata);
+    console.log('[Metadata] Metadata reset to default (mobile)');
+  }
+  
+  return resetMetadata;
+};
+

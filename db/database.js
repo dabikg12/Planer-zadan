@@ -605,6 +605,39 @@ export const optimizeDatabase = async () => {
   }
 };
 
+// Funkcja do czyszczenia wszystkich zadań (reset aplikacji)
+export const clearAllTasks = async () => {
+  // Web mode: use localStorage
+  if (isWeb) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(STORAGE_KEY);
+        nextId = 1;
+        console.log('[DB] All tasks cleared from localStorage');
+      }
+      return;
+    } catch (error) {
+      console.error('[DB] Error clearing tasks from localStorage:', error);
+      throw error;
+    }
+  }
+
+  // Mobile mode: use SQLite
+  const dbInstance = await getDb();
+  if (!dbInstance) {
+    throw new Error("Database not available.");
+  }
+
+  try {
+    await dbInstance.runAsync('DELETE FROM tasks');
+    nextId = 1;
+    console.log('[DB] All tasks cleared from database');
+  } catch (error) {
+    console.error('[DB] Error clearing tasks from database:', error);
+    throw error;
+  }
+};
+
 // Eksportujemy tylko funkcje operujące na bazie, nie samą bazę
 export { initializationPromise };
 

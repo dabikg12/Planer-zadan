@@ -245,9 +245,8 @@ export default function WelcomeModal({ visible, onComplete }) {
         console.warn('[WelcomeModal] Cannot create task - title is empty');
       }
 
-      // TYMCZASOWO WYŁĄCZONE: Mark onboarding as completed
-      // await setOnboardingCompleted(true);
-      // Modal będzie się pokazywał za każdym razem przy uruchomieniu aplikacji
+      // Mark onboarding as completed
+      await setOnboardingCompleted(true);
       
       notificationAsync(Haptics.NotificationFeedbackType.Success);
       onComplete?.();

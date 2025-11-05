@@ -31,7 +31,7 @@ if (Platform.OS !== 'web') {
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { metadata, saveUserData, loadMetadata } = useAppStore();
+  const { metadata, saveUserData, loadMetadata, resetApp } = useAppStore();
   
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -118,6 +118,50 @@ export default function SettingsScreen() {
           onPress: () => {
             loadUserData();
             impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetApp = () => {
+    Alert.alert(
+      'Zresetuj aplikację',
+      'Ta operacja usunie wszystkie zadania i dane użytkownika. Aplikacja zostanie przywrócona do stanu początkowego i wyświetli okno powitalne.\n\nTej operacji nie można cofnąć!',
+      [
+        {
+          text: 'Anuluj',
+          style: 'cancel',
+        },
+        {
+          text: 'Zresetuj',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await resetApp();
+              notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert(
+                'Sukces',
+                'Aplikacja została zresetowana. Zostaniesz przekierowany do ekranu głównego.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => {
+                      router.replace('/');
+                      // Przeładuj aplikację po resecie
+                      setTimeout(() => {
+                        // Wymuś ponowne załadowanie danych
+                        loadMetadata();
+                      }, 500);
+                    },
+                  },
+                ]
+              );
+            } catch (error) {
+              console.error('[Settings] Error resetting app:', error);
+              Alert.alert('Błąd', 'Nie udało się zresetować aplikacji. Spróbuj ponownie.');
+              notificationAsync(Haptics.NotificationFeedbackType.Error);
+            }
           },
         },
       ]
@@ -393,6 +437,59 @@ export default function SettingsScreen() {
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
             </Pressable>
+          </View>
+        </View>
+
+        {/* Sekcja Reset aplikacji */}
+        <View style={{ marginBottom: 32 }}>
+          <Text
+            style={{
+              fontSize: 24,
+              fontWeight: getFontWeight('bold'),
+              color: colors.text,
+              marginBottom: 16,
+              fontFamily: getFontFamily('bold', 'display'),
+            }}
+          >
+            Reset aplikacji
+          </Text>
+          
+          <View
+            style={{
+              backgroundColor: colors.card,
+              borderRadius: 16,
+              padding: 20,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: getFontWeight('600'),
+                color: colors.text,
+                marginBottom: 8,
+                fontFamily: getFontFamily('600', 'text'),
+              }}
+            >
+              Wyczyść wszystkie dane
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                color: colors.textSecondary,
+                lineHeight: 20,
+                marginBottom: 16,
+                fontFamily: getFontFamily('normal', 'text'),
+              }}
+            >
+              Ta operacja usunie wszystkie zadania i dane użytkownika. Aplikacja zostanie przywrócona do stanu początkowego i wyświetli okno powitalne.
+            </Text>
+            <IOSButton
+              title="Zresetuj aplikację"
+              onPress={handleResetApp}
+              variant="destructive"
+            />
           </View>
         </View>
 
