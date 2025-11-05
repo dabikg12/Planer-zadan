@@ -280,7 +280,7 @@ const useAppStore = create((set, get) => ({
       console.log('[Store] App initialization complete.');
       
       // Sprawdź czy pokazać modal powitalny (zawsze pokazuj - wyłączone cachowanie)
-      const shouldShowWelcome = true; // Zawsze pokazuj modal
+      const shouldShowWelcome = false; // Tymczasowo wyłączone
       
       set({ 
         isAppInitialized: true, 
@@ -293,7 +293,7 @@ const useAppStore = create((set, get) => ({
       set({ 
         isAppInitialized: true, 
         isAppInitializing: false,
-        shouldShowWelcomeModal: true,
+        shouldShowWelcomeModal: false,
       });
     }
   },

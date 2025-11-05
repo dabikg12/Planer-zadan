@@ -376,12 +376,13 @@ export default function HomeScreen() {
               }}>
                 Szybkie akcje
               </Text>
-              <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
                 <Pressable
                   onPress={() => router.push('/tasks')}
                   onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
                   style={{
                     flex: 1,
+                    minWidth: '45%',
                     backgroundColor: colors.activeBg,
                     borderRadius: 20,
                     padding: 18,
@@ -415,6 +416,7 @@ export default function HomeScreen() {
                   onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
                   style={{
                     flex: 1,
+                    minWidth: '45%',
                     backgroundColor: colors.completedBg,
                     borderRadius: 20,
                     padding: 18,
@@ -440,6 +442,40 @@ export default function HomeScreen() {
                     fontFamily: getFontFamily('normal', 'text'),
                   }}>
                     Zobacz harmonogram
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => router.push('/settings')}
+                  onPressIn={() => impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  style={{
+                    flex: 1,
+                    minWidth: '45%',
+                    backgroundColor: colors.card,
+                    borderRadius: 20,
+                    padding: 18,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="settings-outline" size={24} color={colors.primary} />
+                  </View>
+                  <Text style={{
+                    fontSize: 17,
+                    fontWeight: getFontWeight('600'),
+                    color: colors.text,
+                    marginBottom: 4,
+                    fontFamily: getFontFamily('600', 'display'),
+                  }}>
+                    Ustawienia
+                  </Text>
+                  <Text style={{
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                    fontFamily: getFontFamily('normal', 'text'),
+                  }}>
+                    Zarządzaj danymi
                   </Text>
                 </Pressable>
               </View>
