@@ -8,20 +8,30 @@ import {
   Platform,
   Alert,
   LayoutAnimation,
+  Dimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Animated,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
+
+// Gesture handler dla swipe
+let GestureDetector, Gesture;
+if (Platform.OS !== 'web') {
+  try {
+    const gestureHandler = require('react-native-gesture-handler');
+    GestureDetector = gestureHandler.GestureDetector;
+    Gesture = gestureHandler.Gesture;
+  } catch (e) {
+    console.warn('react-native-gesture-handler not available');
+  }
+}
 import TaskItem from '../components/TaskItem';
 import TaskForm from '../components/TaskForm';
 import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
@@ -40,7 +50,31 @@ export default function TasksScreen() {
   const historySectionRef = useRef(null);
   const [historySectionY, setHistorySectionY] = useState(0);
 
-  const contentOpacity = useSharedValue(1);
+  // Pobierz szerokość ekranu przed stworzeniem gestu (nie można w worklecie)
+  const screenWidth = useMemo(() => Dimensions.get('window').width, []);
+
+  // Swipe gesture dla zmiany zakładek
+  const swipeGesture = useMemo(() => {
+    if (Platform.OS === 'web' || !Gesture) return null;
+    
+    return Gesture.Pan()
+      .activeOffsetX([-10, 10])
+      .failOffsetY([-20, 20])
+      .onEnd((event) => {
+        const { translationX, velocityX } = event;
+        
+        if (Math.abs(translationX) > screenWidth * 0.25 || Math.abs(velocityX) > 500) {
+          if (translationX > 0 || velocityX > 0) {
+            // Swipe w prawo → poprzednia zakładka
+            router.push('/');
+          } else {
+            // Swipe w lewo → następna zakładka
+            router.push('/calendar');
+          }
+          impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      });
+  }, [router, screenWidth]);
 
   // Ładuj zadania tylko przy pierwszym zamontowaniu, nie przy każdym focus
   // Użyj useRef aby śledzić czy już załadowaliśmy dane
@@ -166,18 +200,19 @@ export default function TasksScreen() {
     return taskFilter === 'active' ? recentActiveTasks : recentCompletedTasks;
   }, [taskFilter, recentActiveTasks, recentCompletedTasks]);
 
-  const contentAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: contentOpacity.value,
-  }));
+
+  const Wrapper = swipeGesture && GestureDetector ? GestureDetector : View;
+  const wrapperProps = swipeGesture && GestureDetector ? { gesture: swipeGesture } : {};
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <Wrapper {...wrapperProps} style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style="light" />
       <Animated.ScrollView
         ref={scrollViewRef}
         style={[{ flex: 1 }]}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 + insets.bottom }} // Space for glass menu (88px) + extra padding (32px)
+        contentContainerStyle={{ paddingTop: 32 + insets.top, paddingBottom: 120 + insets.bottom }} // Space for notch + glass menu (88px) + extra padding (32px)
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -187,9 +222,9 @@ export default function TasksScreen() {
           />
         }
       >
-        <Animated.View style={contentAnimatedStyle}>
+        <View>
           {/* Nagłówek z kartami statystyk */}
-          <View style={{ paddingHorizontal: 20, paddingTop: 32, paddingBottom: 24 }}>
+          <View style={{ paddingHorizontal: 20, paddingBottom: 24 }}>
             <View style={{
               backgroundColor: colors.card,
               borderRadius: 24,
@@ -702,7 +737,7 @@ export default function TasksScreen() {
               </View>
             )}
           </View>
-        </Animated.View>
+        </View>
       </Animated.ScrollView>
 
       <TaskForm
@@ -714,7 +749,8 @@ export default function TasksScreen() {
         onSubmit={handleFormSubmit}
         initialTask={editingTask}
       />
-    </View>
+      </View>
+    </Wrapper>
   );
 }
 

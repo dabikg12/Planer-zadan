@@ -571,7 +571,7 @@ export default function WelcomeBackgroundGraphics({ currentStep }) {
           </>
         );
       
-      case 5: // Step4WakeTime - O której godzinie?
+      case 5: // Step4WakeTime - Ustaw godzinę
         return (
           <>
             <Animated.View style={[styles.gradient1, gradientAnimatedStyle]}>

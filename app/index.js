@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from 'react';
+﻿import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   RefreshControl,
   Text,
@@ -8,19 +8,30 @@ import {
   Platform,
   Alert,
   LayoutAnimation,
+  Dimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Animated,
-  useAnimatedStyle,
-  useSharedValue,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
+
+// Gesture handler dla swipe
+let GestureDetector, Gesture;
+if (Platform.OS !== 'web') {
+  try {
+    const gestureHandler = require('react-native-gesture-handler');
+    GestureDetector = gestureHandler.GestureDetector;
+    Gesture = gestureHandler.Gesture;
+  } catch (e) {
+    console.warn('react-native-gesture-handler not available');
+  }
+}
 import TaskItem from '../components/TaskItem';
 import TaskForm from '../components/TaskForm';
 import StatCard from '../components/StatCard';
@@ -38,7 +49,34 @@ export default function HomeScreen() {
   const [editingTask, setEditingTask] = useState(null);
   const [taskFilter, setTaskFilter] = useState('active'); // 'active' lub 'completed'
 
-  const contentOpacity = useSharedValue(1);
+  const scrollViewRef = useRef(null);
+
+  // Pobierz szerokość ekranu przed stworzeniem gestu (nie można w worklecie)
+  const screenWidth = useMemo(() => Dimensions.get('window').width, []);
+
+  // Swipe gesture dla zmiany zakładek
+  const swipeGesture = useMemo(() => {
+    if (Platform.OS === 'web' || !Gesture) return null;
+    
+    return Gesture.Pan()
+      .activeOffsetX([-10, 10]) // Wymaga min 10px przesunięcia
+      .failOffsetY([-20, 20]) // Ignoruj jeśli przesunięcie pionowe > 20px
+      .onEnd((event) => {
+        const { translationX, velocityX } = event;
+        
+        // Jeśli przesunięcie wystarczająco duże lub szybkie
+        if (Math.abs(translationX) > screenWidth * 0.25 || Math.abs(velocityX) > 500) {
+          if (translationX > 0 || velocityX > 0) {
+            // Swipe w prawo → idź do poprzedniej zakładki (nie ma, to pierwsza)
+            // Zostaw puste - nie ma poprzedniej zakładki dla index
+          } else {
+            // Swipe w lewo → idź do następnej zakładki
+            router.push('/tasks');
+          }
+          impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      });
+  }, [router, screenWidth]);
 
   // Automatycznie otwórz formularz gdy przybywamy z parametrem openForm
   useFocusEffect(
@@ -161,21 +199,22 @@ export default function HomeScreen() {
     return taskFilter === 'active' ? activeTasks : completedTasks;
   }, [taskFilter, activeTasks, completedTasks]);
 
-  const contentAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: contentOpacity.value,
-  }));
 
   // Renderuj główny widok natychmiast, bez ekranu ładowania
   // Ekran ładowania może powodować białe mignięcie przy przełączaniu zakładek
   // Dane są już załadowane przez store w _layout.js podczas inicjalizacji aplikacji
 
+  const Wrapper = swipeGesture && GestureDetector ? GestureDetector : View;
+  const wrapperProps = swipeGesture && GestureDetector ? { gesture: swipeGesture } : {};
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <Wrapper {...wrapperProps} style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style="light" />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }} // Space for glass menu (88px) + extra padding (32px)
+        contentContainerStyle={{ paddingTop: 32 + insets.top, paddingBottom: 120 + (insets.bottom || 0) }} // Space for notch + glass menu (88px) + extra padding (32px)
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -184,9 +223,8 @@ export default function HomeScreen() {
             colors={[colors.primary]}
           />
         }
-      >
-        <Animated.View style={contentAnimatedStyle}>
-          <View style={{ paddingHorizontal: 20, paddingTop: 32, paddingBottom: 24 }}>
+        >
+          <View style={{ paddingHorizontal: 20, paddingBottom: 24 }}>
             <View style={{
               backgroundColor: colors.card,
               borderRadius: 24,
@@ -407,8 +445,7 @@ export default function HomeScreen() {
               </View>
             </View>
           </View>
-        </Animated.View>
-      </ScrollView>
+        </ScrollView>
 
       <TaskForm
         visible={showForm}
@@ -419,7 +456,8 @@ export default function HomeScreen() {
         onSubmit={handleFormSubmit}
         initialTask={editingTask}
       />
-    </View>
+      </View>
+    </Wrapper>
   );
 }
 

@@ -14,7 +14,7 @@ const benefits = [
   {
     icon: 'checkmark-circle-outline',
     title: 'Śledź postępy',
-    description: 'Widz swoje osiągnięcia i motywuj się do działania',
+    description: 'Sprawdzaj swoje osiągnięcia i motywuj się do działania',
   },
   {
     icon: 'trophy-outline',
@@ -71,7 +71,7 @@ export default function Step1Intro({ isActive = true }) {
         ]}
       >
         <Text style={textStyles.titleLarge}>Witaj w Planerze!</Text>
-        <Text style={textStyles.subtitle}>Planer pomaga ci...</Text>
+        <Text style={textStyles.h2Heading}>Planer pomoże ci...</Text>
       </Animated.View>
 
       <View style={styles.benefitsContainer}>

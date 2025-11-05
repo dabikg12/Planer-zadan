@@ -48,6 +48,7 @@ const useAppStore = create((set, get) => ({
   tasks: [],
   selectedTask: null,
   currentDate: new Date().toISOString().split('T')[0],
+  currentTabIndex: 0, // Aktualny indeks zakładki (0=index, 1=tasks, 2=calendar)
   selectedDate: null,
   isLoading: false,
   metadata: null,
@@ -296,6 +297,9 @@ const useAppStore = create((set, get) => ({
       });
     }
   },
+
+  // Funkcje pomocnicze
+  setCurrentTabIndex: (index) => set({ currentTabIndex: index }),
 }));
 
 export default useAppStore;

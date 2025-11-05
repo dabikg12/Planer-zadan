@@ -180,7 +180,7 @@ export default function Step2UserData({ onDataChange, initialData = {}, isActive
         ]}
       >
         <Text style={textStyles.titleLarge}>Wprowadź swoje dane</Text>
-        <Text style={textStyles.subtitle}>Pozwól nam lepiej Cię poznać</Text>
+        <Text style={textStyles.h2Heading}>Pozwól nam lepiej Cię poznać</Text>
       </RNAnimated.View>
 
       <View style={styles.form}>
@@ -253,41 +253,53 @@ export default function Step2UserData({ onDataChange, initialData = {}, isActive
 
       {/* Natywny Date Picker dla iOS w modalu */}
       {Platform.OS === 'ios' && showDatePicker && DateTimePicker && (
-        <Pressable
-          style={styles.iosModalOverlay}
-          onPress={() => setShowDatePicker(false)}
+        <Modal
+          visible={showDatePicker}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowDatePicker(false)}
+          statusBarTranslucent={true}
         >
-          <View style={styles.iosModalContent} onStartShouldSetResponder={() => true}>
-            <View style={styles.iosModalHeader}>
-              <Text style={textStyles.modalTitle}>Wybierz datę urodzenia</Text>
-              <Pressable
-                onPress={() => {
-                  setShowDatePicker(false);
-                  impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: colors.overlay,
+              justifyContent: 'flex-end',
+            }}
+            onPress={() => setShowDatePicker(false)}
+          >
+            <View style={[styles.iosModalContent, { maxHeight: '90%' }]} onStartShouldSetResponder={() => true}>
+              <View style={styles.iosModalHeader}>
+                <Text style={textStyles.modalTitle}>Wybierz datę urodzenia</Text>
+                <Pressable
+                  onPress={() => {
+                    setShowDatePicker(false);
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={styles.iosModalCloseButton}
+                >
+                  <Text style={textStyles.modalCloseText}>Gotowe</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                value={birthDate || getDefaultDate()}
+                mode="date"
+                display="spinner"
+                onChange={(event, selectedDate) => {
+                  // Na iOS aktualizujemy datę w czasie rzeczywistym podczas przewijania
+                  if (selectedDate) {
+                    setBirthDate(selectedDate);
+                  }
                 }}
-                style={styles.iosModalCloseButton}
-              >
-                <Text style={textStyles.modalCloseText}>Gotowe</Text>
-              </Pressable>
+                maximumDate={maxDate}
+                minimumDate={minDate}
+                locale="pl_PL"
+                textColor={colors.text}
+                accentColor={colors.primary}
+              />
             </View>
-            <DateTimePicker
-              value={birthDate || getDefaultDate()}
-              mode="date"
-              display="spinner"
-              onChange={(event, selectedDate) => {
-                // Na iOS aktualizujemy datę w czasie rzeczywistym podczas przewijania
-                if (selectedDate) {
-                  setBirthDate(selectedDate);
-                }
-              }}
-              maximumDate={maxDate}
-              minimumDate={minDate}
-              locale="pl_PL"
-              textColor={colors.text}
-              accentColor={colors.primary}
-            />
-          </View>
-        </Pressable>
+          </Pressable>
+        </Modal>
       )}
 
       {/* Fallback dla web - natywny input daty HTML */}
@@ -368,15 +380,6 @@ const styles = StyleSheet.create({
   inputGroup: {
     marginBottom: 8,
     ...inputStyles.welcomeInputGroup,
-  },
-  iosModalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
   },
   iosModalContent: {
     backgroundColor: colors.card,

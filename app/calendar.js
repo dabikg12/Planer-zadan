@@ -10,10 +10,23 @@ import {
   LayoutAnimation,
   UIManager,
   Modal,
+  Dimensions,
 } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+
+// Gesture handler dla swipe
+let GestureDetector, Gesture;
+if (Platform.OS !== 'web') {
+  try {
+    const gestureHandler = require('react-native-gesture-handler');
+    GestureDetector = gestureHandler.GestureDetector;
+    Gesture = gestureHandler.Gesture;
+  } catch (e) {
+    console.warn('react-native-gesture-handler not available');
+  }
+}
 
 // Konfiguracja polskiej lokalizacji kalendarza
 LocaleConfig.locales['pl'] = {
@@ -62,9 +75,6 @@ LocaleConfig.defaultLocale = 'pl';
 // Warunkowy import reanimated - użyj animationHelpers zamiast bezpośredniego importu
 import {
   Animated,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
@@ -95,7 +105,31 @@ export default function CalendarScreen() {
   const [showTaskListModal, setShowTaskListModal] = useState(false);
   const scrollViewRef = useRef(null);
 
-  const contentOpacity = useSharedValue(1);
+  // Pobierz szerokość ekranu przed stworzeniem gestu (nie można w worklecie)
+  const screenWidth = useMemo(() => Dimensions.get('window').width, []);
+
+  // Swipe gesture dla zmiany zakładek
+  const swipeGesture = useMemo(() => {
+    if (Platform.OS === 'web' || !Gesture) return null;
+    
+    return Gesture.Pan()
+      .activeOffsetX([-10, 10])
+      .failOffsetY([-20, 20])
+      .onEnd((event) => {
+        const { translationX, velocityX } = event;
+        
+        if (Math.abs(translationX) > screenWidth * 0.25 || Math.abs(velocityX) > 500) {
+          if (translationX > 0 || velocityX > 0) {
+            // Swipe w prawo → poprzednia zakładka
+            router.push('/tasks');
+          } else {
+            // Swipe w lewo → następna zakładka (nie ma dalej)
+            // Zostaw puste - nie ma następnej zakładki
+          }
+          impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      });
+  }, [router, screenWidth]);
 
   // Memoizuj dzisiejszą datę - oblicz tylko raz, nie przy każdym renderze dnia
   const todayString = useMemo(() => formatDateLocal(new Date()), []);
@@ -138,7 +172,6 @@ export default function CalendarScreen() {
   };
 
   const handleAddTaskForDate = (date) => {
-    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setEditingTask(null);
     setSelectedDate(date);
     setShowForm(true);
@@ -294,9 +327,9 @@ export default function CalendarScreen() {
     });
   }, [tasks, selectedDate]);
 
-  const contentAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: contentOpacity.value,
-  }));
+
+  const Wrapper = swipeGesture && GestureDetector ? GestureDetector : View;
+  const wrapperProps = swipeGesture && GestureDetector ? { gesture: swipeGesture } : {};
 
   // Niestandardowy komponent dnia - kropki POD przyciskiem, nie wewnątrz
   // Działa zarówno na web jak i mobile
@@ -388,9 +421,10 @@ export default function CalendarScreen() {
   }, [selectedDate, todayString, markedDates]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style="light" />
-      <Animated.View style={[{ flex: 1, paddingTop: 32, paddingHorizontal: 20 }, contentAnimatedStyle]}>
+    <Wrapper {...wrapperProps} style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <StatusBar style="light" />
+        <View style={{ flex: 1, paddingTop: 32 + insets.top, paddingHorizontal: 20 }}>
         <View style={{
           backgroundColor: colors.card,
           borderRadius: 24,
@@ -605,7 +639,7 @@ export default function CalendarScreen() {
             </Text>
           </View>
         )}
-      </Animated.View>
+      </View>
 
       <TaskForm
         visible={showForm}
@@ -774,7 +808,8 @@ export default function CalendarScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+      </View>
+    </Wrapper>
   );
 }
 

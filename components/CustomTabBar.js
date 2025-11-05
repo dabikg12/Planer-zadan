@@ -1,39 +1,70 @@
-import React from 'react';
-import { View, StyleSheet, Platform, Pressable } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Platform, Pressable, Image } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { 
+  useAnimatedStyle, 
+  useSharedValue, 
+  Animated,
+  AnimatedView,
+} from '../utils/animationHelpers';
+import { 
+  animateMenuFlash,
+  animateIconPress,
+} from '../utils/commonAnimations';
 import { colors, priorityColors } from '../utils/colors';
+import { FROST_NOISE_SOURCE } from '../utils/frostNoise';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import useAppStore from '../store/useAppStore';
 
 // Komponent pojedynczej zakładki
 const TabButton = ({ isFocused, onPress, onLongPress, iconName }) => {
+  const iconScale = useSharedValue(1);
+  
+  const iconAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: iconScale.value }],
+  }));
+
+  const handlePress = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    // Animacja ikony przy kliknięciu
+    animateIconPress(iconScale, 0.7, { duration: 300 });
+    onPress();
+    // Powrót do normalnej skali po krótkim czasie
+    setTimeout(() => {
+      animateIconPress(iconScale, 1, { duration: 300 });
+    }, 300);
+  };
+
   return (
     <Pressable
-      onPress={() => {
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-        onPress();
-      }}
+      onPress={handlePress}
       onLongPress={onLongPress}
       style={styles.tabButton}
     >
-      {isFocused && (
-        <View style={styles.activeTabIndicator}>
-          <BlurView
-            intensity={20}
-            tint="light"
-            style={styles.indicatorBlur}
+      <View style={styles.iconContainer}>
+        {isFocused && (
+          <View style={styles.activeTabIndicator}>
+            <BlurView
+              intensity={20}
+              tint="light"
+              style={styles.indicatorBlur}
+            />
+          </View>
+        )}
+        <AnimatedView style={iconAnimatedStyle}>
+          <Ionicons
+            name={iconName}
+            size={26}
+            color={isFocused ? colors.accent : colors.white}
+            style={styles.icon}
           />
-        </View>
-      )}
-      <Ionicons
-        name={iconName}
-        size={26}
-        color={isFocused ? colors.accent : colors.white}
-        style={{ zIndex: 1 }}
-      />
+        </AnimatedView>
+      </View>
     </Pressable>
   );
 };
@@ -42,12 +73,7 @@ const TabButton = ({ isFocused, onPress, onLongPress, iconName }) => {
 const AddTaskButton = ({ onPress }) => {
   return (
     <Pressable
-      onPress={() => {
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        }
-        onPress();
-      }}
+      onPress={onPress}
       style={styles.fab}
     >
       <View style={styles.fabContainer}>
@@ -58,6 +84,34 @@ const AddTaskButton = ({ onPress }) => {
 };
 
 export default function CustomTabBar({ state, descriptors, navigation }) {
+  const insets = useSafeAreaInsets();
+  const { setCurrentTabIndex } = useAppStore();
+  const menuFlash = useSharedValue(0);
+  const prevActiveTab = useRef(state.index);
+
+  const AnimatedBlurView = Animated.createAnimatedComponent
+    ? Animated.createAnimatedComponent(BlurView)
+    : BlurView;
+  const AnimatedNoiseImage = Animated.createAnimatedComponent
+    ? Animated.createAnimatedComponent(Image)
+    : Image;
+
+  // Wykryj zmianę zakładki i dodaj błysk + aktualizuj store
+  useEffect(() => {
+    if (prevActiveTab.current !== state.index) {
+      // Delikatny błysk przy zmianie zakładki
+      animateMenuFlash(menuFlash, { maxOpacity: 0.4, riseDuration: 100, fallDuration: 200 });
+      // Aktualizuj store z aktualnym indeksem zakładki
+      setCurrentTabIndex(state.index);
+      prevActiveTab.current = state.index;
+    }
+  }, [state.index, menuFlash, setCurrentTabIndex]);
+
+  // Animowane style dla błysku
+  const flashStyle = useAnimatedStyle(() => ({
+    opacity: menuFlash.value,
+  }));
+
   const handleAddTask = () => {
     const activeRoute = state.routes[state.index];
     const activeTabName = activeRoute?.name || 'index';
@@ -108,7 +162,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 12) }]}>
       <View style={styles.menuWrapper}>
         {/* Menu z efektem blur */}
         <View style={styles.shadowContainer}>
@@ -117,7 +171,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
             <MenuContent />
           </View>
           {/* Blur jako background */}
-          <BlurView
+          <AnimatedBlurView
             tint="light"
             intensity={10}
             style={styles.blurContainer}
@@ -131,9 +185,15 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
                 style={styles.gradientCard}
-              />
+              >
+                {/* Błysk przy zmianie zakładki */}
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.flashOverlay, flashStyle]}
+                />
+              </LinearGradient>
             </View>
-          </BlurView>
+          </AnimatedBlurView>
         </View>
 
         {/* Floating Action Button */}
@@ -149,7 +209,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 12,
     alignItems: 'center',
     justifyContent: 'flex-end',
     width: '100%',
@@ -209,6 +268,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  flashOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.whiteTransparent,
+    zIndex: 2,
   },
   tabBar: {
     flexDirection: 'row',
@@ -228,17 +293,28 @@ const styles = StyleSheet.create({
     maxWidth: '33.33%',
     position: 'relative',
   },
+  iconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    width: '100%',
+    height: 26, // Wysokość ikony
+  },
+  icon: {
+    zIndex: 1,
+  },
   activeTabIndicator: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
+    alignSelf: 'center',
     width: '66.67%',
     height: 40,
     borderRadius: 50,
     backgroundColor: 'rgba(102, 187, 106, 0.1)',
     overflow: 'hidden',
-    marginTop: -20, // -50% of height to center
-    marginLeft: '-33.33%', // -50% of width to center
+    top: '50%',
+    marginTop: -20, // -50% wysokości wskaźnika, aby wyśrodkować względem ikony
+    left: '50%',
+    marginLeft: '-33.33%', // -50% szerokości wskaźnika
   },
   indicatorBlur: {
     width: '100%',

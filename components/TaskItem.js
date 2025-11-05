@@ -110,7 +110,6 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
   };
 
   const handleConfirmDelete = async () => {
-    impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // Zamknij tryb potwierdzania natychmiast
     setIsConfirmingDelete(false);
     
@@ -118,7 +117,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete, index = 0 }) {
     opacity.value = withTiming(0, { duration: 200 });
     cardTranslate.value = withTiming(300, { duration: 200 });
     
-    // Wywołaj onDelete
+    // Wywołaj onDelete (wibracja jest w handleDelete w ekranie)
     await onDelete();
   };
 

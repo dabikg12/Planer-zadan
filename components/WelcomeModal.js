@@ -84,6 +84,7 @@ export default function WelcomeModal({ visible, onComplete }) {
   const menuFlash = useSharedValue(0);
   const iconScale = useSharedValue(1);
   const prevStep = React.useRef(currentStep);
+  const isBlockingScroll = React.useRef(false);
   const { saveUserData, addTask, setOnboardingCompleted } = useAppStore();
   
   // Animacje dla timeline - tworzymy wszystkie shared values bezwarunkowo
@@ -271,7 +272,45 @@ export default function WelcomeModal({ visible, onComplete }) {
   };
 
   const handlePageSelected = (e) => {
+    // Ignoruj jeśli blokujemy scroll (zapobiega nieskończonej pętli)
+    if (isBlockingScroll.current) {
+      return;
+    }
+    
     const page = e.nativeEvent.position;
+    const previousStep = prevStep.current;
+    
+    // Walidacja: nie pozwól przejść do następnej strony jeśli formularz nie jest wypełniony
+    // Sprawdzamy czy próbujemy przejść do przodu (nie wstecz)
+    if (page > previousStep) {
+      // Walidacja dla kroku 2 (imię)
+      if (previousStep === 1 && userData.firstName.trim().length === 0) {
+        // Wróć do poprzedniej strony
+        isBlockingScroll.current = true;
+        if (pagerRef.current) {
+          pagerRef.current.setPage(previousStep);
+        }
+        // Reset flagi w następnym ticku
+        queueMicrotask(() => {
+          isBlockingScroll.current = false;
+        });
+        return;
+      }
+      // Walidacja dla kroku 4 (tytuł zadania)
+      if (previousStep === 3 && taskTitle.trim().length === 0) {
+        // Wróć do poprzedniej strony
+        isBlockingScroll.current = true;
+        if (pagerRef.current) {
+          pagerRef.current.setPage(previousStep);
+        }
+        // Reset flagi w następnym ticku
+        queueMicrotask(() => {
+          isBlockingScroll.current = false;
+        });
+        return;
+      }
+    }
+    
     setCurrentStep(page);
   };
 

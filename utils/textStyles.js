@@ -62,6 +62,16 @@ export const textStyles = StyleSheet.create({
     fontFamily: getFontFamily('normal', 'text'),
   },
 
+  // Nagłówek h2 - większy, bardziej wyeksponowany subtitle
+  h2Heading: {
+    fontSize: 24,
+    fontWeight: getFontWeight('600'),
+    color: colors.textSecondary,
+    textAlign: 'center',
+    fontFamily: getFontFamily('600', 'display'),
+    marginTop: 16,
+  },
+
   subtitleMedium: {
     fontSize: 17,
     color: colors.textSecondary,

@@ -121,7 +121,7 @@ export default function Step6FirstTask({ onDataChange, initialTask = null, isAct
         ]}
       >
         <Text style={textStyles.titleMedium}>Co chcesz osiągnąć?</Text>
-        <Text style={textStyles.subtitleMedium}>Podaj tytuł i opis zadania</Text>
+        <Text style={textStyles.h2Heading}>Wybierz pierwsze zadanie</Text>
       </RNAnimated.View>
 
       <View style={styles.content}>
@@ -221,7 +221,6 @@ const SuggestionButton = ({ text, icon, index, onPress }) => {
         </View>
         <Text style={[textStyles.suggestionText, { flex: 1 }]}>{text}</Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
     </AnimatedPressable>
   );
 };

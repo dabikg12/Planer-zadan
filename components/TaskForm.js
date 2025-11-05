@@ -577,7 +577,7 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
                   marginTop: 8,
                   fontFamily: getFontFamily('normal', 'text'),
                 }}>
-                  Format: RRRR-MM-DD
+                  Format: DD-MM-RRRR
                 </Text>
             </View>
 
@@ -667,10 +667,6 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
               console.log('[TaskForm] Button clicked!');
               handleSubmit();
             }}
-            onPressIn={() => {
-              console.log('[TaskForm] Button press in');
-              impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            }}
             style={[inputStyles.buttonPrimary, { marginTop: 16, cursor: Platform.OS === 'web' ? 'pointer' : 'default' }]}
             accessibilityRole="button"
             accessibilityLabel={initialTask ? 'Zapisz zmiany' : 'Dodaj zadanie'}
@@ -714,87 +710,92 @@ export default function TaskForm({ visible, onClose, onSubmit, initialTask = nul
 
         {/* Date Picker dla iOS w modalu */}
         {Platform.OS === 'ios' && showDatePicker && DateTimePicker && (
-          <Pressable
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: colors.overlay,
-              justifyContent: 'flex-end',
-            }}
-            onPress={() => setShowDatePicker(false)}
+          <Modal
+            visible={showDatePicker}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowDatePicker(false)}
+            statusBarTranslucent={true}
           >
-            <View
+            <Pressable
               style={{
-                backgroundColor: colors.card,
-                borderTopLeftRadius: 20,
-                borderTopRightRadius: 20,
-                paddingBottom: 40,
+                flex: 1,
+                backgroundColor: colors.overlay,
+                justifyContent: 'flex-end',
               }}
-              onStartShouldSetResponder={() => true}
+              onPress={() => setShowDatePicker(false)}
             >
               <View
                 style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingHorizontal: 20,
-                  paddingTop: 16,
-                  paddingBottom: 12,
-                  borderBottomWidth: 1,
-                  borderBottomColor: colors.border,
+                  backgroundColor: colors.card,
+                  borderTopLeftRadius: 20,
+                  borderTopRightRadius: 20,
+                  paddingBottom: 40,
+                  maxHeight: '90%',
                 }}
+                onStartShouldSetResponder={() => true}
               >
-                <Text
+                <View
                   style={{
-                    fontSize: 18,
-                    fontWeight: getFontWeight('600'),
-                    color: colors.text,
-                    fontFamily: getFontFamily('600', 'text'),
-                  }}
-                >
-                  Wybierz datę
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setShowDatePicker(false);
-                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }}
-                  style={{
-                    paddingVertical: 4,
-                    paddingHorizontal: 8,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingHorizontal: 20,
+                    paddingTop: 16,
+                    paddingBottom: 12,
+                    borderBottomWidth: 1,
+                    borderBottomColor: colors.border,
                   }}
                 >
                   <Text
                     style={{
-                      fontSize: 16,
+                      fontSize: 18,
                       fontWeight: getFontWeight('600'),
-                      color: colors.primary,
+                      color: colors.text,
                       fontFamily: getFontFamily('600', 'text'),
                     }}
                   >
-                    Gotowe
+                    Wybierz datę
                   </Text>
-                </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setShowDatePicker(false);
+                      impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={{
+                      paddingVertical: 4,
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: getFontWeight('600'),
+                        color: colors.primary,
+                        fontFamily: getFontFamily('600', 'text'),
+                      }}
+                    >
+                      Gotowe
+                    </Text>
+                  </Pressable>
+                </View>
+                <DateTimePicker
+                  value={dueDate || new Date()}
+                  mode="date"
+                  display="spinner"
+                  onChange={(event, date) => {
+                    if (date) {
+                      setDueDate(date);
+                    }
+                  }}
+                  minimumDate={initialTask ? null : new Date()}
+                  locale="pl_PL"
+                  textColor={colors.text}
+                  accentColor={colors.primary}
+                />
               </View>
-              <DateTimePicker
-                value={dueDate || new Date()}
-                mode="date"
-                display="spinner"
-                onChange={(event, date) => {
-                  if (date) {
-                    setDueDate(date);
-                  }
-                }}
-                minimumDate={initialTask ? null : new Date()}
-                locale="pl_PL"
-                textColor={colors.text}
-                accentColor={colors.primary}
-              />
-            </View>
-          </Pressable>
+            </Pressable>
+          </Modal>
         )}
       </KeyboardAvoidingView>
     </Modal>

@@ -18,7 +18,11 @@ if (Platform.OS !== 'web') {
 export default function Step5BedTime({ onDateChange, initialDate = null, isActive = true }) {
   const [selectedDate, setSelectedDate] = useState(initialDate ? new Date(initialDate) : null);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [dateInput, setDateInput] = useState(initialDate || '');
+  const [dateInput, setDateInput] = useState('');
+  // Dla iOS - przechowuj aktualną wartość pickera w czasie rzeczywistym
+  const [iosPickerDate, setIosPickerDate] = useState(() => {
+    return initialDate ? new Date(initialDate) : new Date();
+  });
 
   // Animacje dla nagłówka
   const headerOpacity = useRef(new Animated.Value(1)).current; // Na stałe widoczny (bez fade-in)
@@ -60,12 +64,21 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
     onDateChange?.(dateStr);
   }, [selectedDate]);
 
+  // Synchronizuj dateInput z selectedDate
+  React.useEffect(() => {
+    if (selectedDate) {
+      setDateInput(formatDate(selectedDate));
+    } else {
+      setDateInput('');
+    }
+  }, [selectedDate]);
+
   const handleDateChange = (event, date) => {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
       if (event.type === 'set' && date) {
         setSelectedDate(date);
-        setDateInput(formatDateForStorage(date));
+        setDateInput(formatDate(date));
         impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     }
@@ -77,10 +90,14 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
       setSelectedDate(null);
       return;
     }
-    const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    // Obsługuj format DD.MM.YYYY lub DD-MM-YYYY
+    const dateMatch = text.match(/^(\d{1,2})[.-](\d{1,2})[.-](\d{4})$/);
     if (dateMatch) {
-      const date = new Date(text + 'T12:00:00');
-      if (!isNaN(date.getTime())) {
+      const day = parseInt(dateMatch[1], 10);
+      const month = parseInt(dateMatch[2], 10) - 1; // Miesiące są 0-indexowane
+      const year = parseInt(dateMatch[3], 10);
+      const date = new Date(year, month, day, 12, 0, 0);
+      if (!isNaN(date.getTime()) && date.getDate() === day && date.getMonth() === month) {
         setSelectedDate(date);
         impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -110,7 +127,7 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
         ]}
       >
         <Text style={textStyles.titleLarge}>Kiedy wykonasz zadanie?</Text>
-        <Text style={textStyles.subtitle}>Wybierz datę zadania</Text>
+        <Text style={textStyles.h2Heading}>Wybierz datę zadania</Text>
       </Animated.View>
 
       <View style={styles.inputContainer}>
@@ -148,6 +165,9 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
             style={inputStyles.container}
             hitSlop={HIT_SLOP}
             onPress={() => {
+              // Przy otwarciu pickera, ustaw początkową wartość
+              const initialPickerDate = selectedDate || new Date();
+              setIosPickerDate(initialPickerDate);
               setShowDatePicker(true);
               impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
@@ -166,7 +186,13 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
           </Pressable>
         )}
         <Text style={textStyles.hintText}>
-          Format: RRRR-MM-DD (np. {new Date().toISOString().split('T')[0]})
+          Format: DD-MM-RRRR (np. {(() => {
+            const d = new Date();
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            return `${day}-${month}-${year}`;
+          })()})
         </Text>
       </View>
 
@@ -187,49 +213,60 @@ export default function Step5BedTime({ onDateChange, initialDate = null, isActiv
 
       {/* Natywny Date Picker dla iOS w modalu */}
       {Platform.OS === 'ios' && showDatePicker && DateTimePicker && (
-        <Pressable
-          style={styles.iosModalOverlay}
-          onPress={() => setShowDatePicker(false)}
+        <Modal
+          visible={showDatePicker}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowDatePicker(false)}
+          statusBarTranslucent={true}
         >
-          <View style={styles.iosModalContent} onStartShouldSetResponder={() => true}>
-            <View style={styles.iosModalHeader}>
-              <Text style={textStyles.modalTitle}>Wybierz datę</Text>
-              <Pressable
-                onPress={() => {
-                  setShowDatePicker(false);
-                  impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                style={styles.iosModalCloseButton}
-              >
-                <Text style={textStyles.modalCloseText}>Gotowe</Text>
-              </Pressable>
-            </View>
-            {selectedDate && (
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: colors.overlay,
+              justifyContent: 'flex-end',
+            }}
+            onPress={() => setShowDatePicker(false)}
+          >
+            <View style={[styles.iosModalContent, { maxHeight: '90%' }]} onStartShouldSetResponder={() => true}>
+              <View style={styles.iosModalHeader}>
+                <Text style={textStyles.modalTitle}>Wybierz datę</Text>
+                <Pressable
+                  onPress={() => {
+                    // Zapisz aktualną wartość pickera, nawet jeśli użytkownik nie zmienił daty
+                    setSelectedDate(iosPickerDate);
+                    setDateInput(formatDate(iosPickerDate));
+                    setShowDatePicker(false);
+                    impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={styles.iosModalCloseButton}
+                >
+                  <Text style={textStyles.modalCloseText}>Gotowe</Text>
+                </Pressable>
+              </View>
               <View style={{ paddingVertical: 16, alignItems: 'center' }}>
                 <Text style={textStyles.modalDateDisplay}>
-                  {formatDate(selectedDate)}
+                  {formatDate(iosPickerDate)}
                 </Text>
               </View>
-            )}
-            <DateTimePicker
-              value={selectedDate || getDefaultDate()}
-              mode="date"
-              display="spinner"
-              onChange={(event, date) => {
-                if (date) {
-                  setSelectedDate(date);
-                  setDateInput(formatDateForStorage(date));
-                  impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-              }}
-              minimumDate={minDate}
-              maximumDate={maxDate}
-              locale="pl_PL"
-              textColor={colors.text}
-              accentColor={colors.primary}
-            />
-          </View>
-        </Pressable>
+              <DateTimePicker
+                value={iosPickerDate}
+                mode="date"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) {
+                    setIosPickerDate(date);
+                  }
+                }}
+                minimumDate={minDate}
+                maximumDate={maxDate}
+                locale="pl_PL"
+                textColor={colors.text}
+                accentColor={colors.primary}
+              />
+            </View>
+          </Pressable>
+        </Modal>
       )}
 
     </View>
@@ -251,15 +288,6 @@ const styles = StyleSheet.create({
   inputContainer: {
     marginBottom: 32,
     ...inputStyles.welcomeInputGroup,
-  },
-  iosModalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
   },
   iosModalContent: {
     backgroundColor: colors.card,
