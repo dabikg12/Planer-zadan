@@ -14,12 +14,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Animated,
+  AnimatedView,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
+import { useScreenTransition } from '../utils/useScreenTransition';
 
 // Gesture handler dla swipe
 let GestureDetector, Gesture;
@@ -49,6 +51,9 @@ export default function TasksScreen() {
   const scrollViewRef = useRef(null);
   const historySectionRef = useRef(null);
   const [historySectionY, setHistorySectionY] = useState(0);
+  
+  // Animacja przejścia między ekranami
+  const transitionStyle = useScreenTransition();
 
   // Pobierz szerokość ekranu przed stworzeniem gestu (nie można w worklecie)
   const screenWidth = useMemo(() => Dimensions.get('window').width, []);
@@ -206,7 +211,7 @@ export default function TasksScreen() {
 
   return (
     <Wrapper {...wrapperProps} style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <AnimatedView style={[{ flex: 1, backgroundColor: colors.background }, transitionStyle]}>
       <StatusBar style="light" />
       <Animated.ScrollView
         ref={scrollViewRef}
@@ -749,7 +754,7 @@ export default function TasksScreen() {
         onSubmit={handleFormSubmit}
         initialTask={editingTask}
       />
-      </View>
+      </AnimatedView>
     </Wrapper>
   );
 }

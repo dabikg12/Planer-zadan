@@ -75,12 +75,14 @@ LocaleConfig.defaultLocale = 'pl';
 // Warunkowy import reanimated - użyj animationHelpers zamiast bezpośredniego importu
 import {
   Animated,
+  AnimatedView,
 } from '../utils/animationHelpers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { impactAsync, notificationAsync } from '../utils/haptics';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import useAppStore from '../store/useAppStore.js';
+import { useScreenTransition } from '../utils/useScreenTransition';
 import TaskItem from '../components/TaskItem';
 import TaskForm from '../components/TaskForm';
 import { getFontFamily, getFontWeight } from '../utils/fontHelpers';
@@ -104,6 +106,9 @@ export default function CalendarScreen() {
   const [editingTask, setEditingTask] = useState(null);
   const [showTaskListModal, setShowTaskListModal] = useState(false);
   const scrollViewRef = useRef(null);
+  
+  // Animacja przejścia między ekranami
+  const transitionStyle = useScreenTransition();
 
   // Pobierz szerokość ekranu przed stworzeniem gestu (nie można w worklecie)
   const screenWidth = useMemo(() => Dimensions.get('window').width, []);
@@ -422,7 +427,7 @@ export default function CalendarScreen() {
 
   return (
     <Wrapper {...wrapperProps} style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <AnimatedView style={[{ flex: 1, backgroundColor: colors.background }, transitionStyle]}>
         <StatusBar style="light" />
         <View style={{ flex: 1, paddingTop: 32 + insets.top, paddingHorizontal: 20 }}>
         <View style={{
@@ -808,7 +813,7 @@ export default function CalendarScreen() {
           </View>
         </View>
       </Modal>
-      </View>
+      </AnimatedView>
     </Wrapper>
   );
 }
